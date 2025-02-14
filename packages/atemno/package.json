@@ -1,0 +1,62 @@
+{
+  "version": "0.0.0",
+  "type": "module",
+  "name": "compostate",
+  "description": "Composable and reactive state management library",
+  "author": "Alexis Munsayac",
+  "license": "MIT",
+  "keywords": [
+    "pridepack"
+  ],
+  "repository": {
+    "url": "https://github.com/lxsmnsyc/compostate.git",
+    "type": "git"
+  },
+  "homepage": "https://github.com/lxsmnsyc/compostate",
+  "bugs": {
+    "url": "https://github.com/lxsmnsyc/compostate/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=10"
+  },
+  "scripts": {
+    "prepublish": "pridepack clean && pridepack build",
+    "build": "pridepack build",
+    "type-check": "pridepack check",
+    "clean": "pridepack clean",
+    "watch": "pridepack watch",
+    "test": "vitest"
+  },
+  "typesVersions": {
+    "*": {}
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.2",
+    "pridepack": "^2.6.4",
+    "tslib": "^2.8.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "types": "./dist/types/index.d.ts",
+  "main": "./dist/cjs/production/index.cjs",
+  "module": "./dist/esm/production/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "development": {
+        "require": "./dist/cjs/development/index.cjs",
+        "import": "./dist/esm/development/index.mjs"
+      },
+      "require": "./dist/cjs/production/index.cjs",
+      "import": "./dist/esm/production/index.mjs"
+    }
+  }
+}
