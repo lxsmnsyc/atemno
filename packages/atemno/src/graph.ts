@@ -604,10 +604,12 @@ function writeComputationSuccess<T>(
   node: ComputationNode<T>,
   value: T,
 ): void {
-  if (node.state && node.state.type === ComputedState.Success && node.prev) {
-    if (node.source.isEqual(node.prev.value, value)) {
-      return;
-    }
+  if (
+    node.state &&
+    node.state.type === ComputedState.Success &&
+    node.source.isEqual(node.state.value, value)
+  ) {
+    return;
   }
   node.prev = { value };
   node.state = { type: ComputedState.Success, value };
