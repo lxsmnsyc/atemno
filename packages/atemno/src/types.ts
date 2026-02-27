@@ -25,9 +25,8 @@ export const enum State {
 export const enum NodeType {
   Atom = 0,
   Computed = 1,
-  Effect = 2,
-  Resource = 3,
-  Observer = 4,
+  Resource = 2,
+  Observer = 3,
 }
 
 export const enum ComputedState {
@@ -38,9 +37,4 @@ export const enum ComputedState {
 
 export interface Ref<T> {
   value: T;
-}
-
-export const enum ScheduleType {
-  Sync = 0,
-  Idle = 1,
 }

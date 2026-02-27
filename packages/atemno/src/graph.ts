@@ -2,21 +2,8 @@ import { IS_EQUAL } from './constants';
 import type { Cleanup, IsEqual, Ref } from './types';
 import { ComputedState, NodeType, State } from './types';
 
-export class ResourceNotReadyError<T> extends Error {
-  constructor(readonly request: Promise<T>) {
-    super('Resource is not yet ready.');
-  }
-}
-
-type ComputationNode<T> = ComputedNode<T> | ResourceNode<T>;
-
-type TrackableNode<T> = AtomNode<T> | ComputedNode<T> | ResourceNode<T>;
-
-type TrackerNode<T> =
-  | ComputedNode<T>
-  | ResourceNode<T>
-  | ObserverNode<T>
-  | EffectNode;
+type TrackableNode<T> = AtomNode<T> | ComputedNode<T>;
+type TrackerNode<T> = ComputedNode<T> | ObserverNode<T>;
 
 let ID = 0;
 
@@ -72,30 +59,6 @@ export function computed<T>(
   };
 }
 
-export interface ResourceOptions<T> {
-  name?: string;
-  isEqual?: IsEqual<T>;
-}
-
-export interface Resource<T> {
-  type: NodeType.Resource;
-  name: string;
-  compute: AsyncComputation<T>;
-  isEqual: IsEqual<T>;
-}
-
-export function resource<T>(
-  compute: AsyncComputation<T>,
-  options: ResourceOptions<T> = {},
-): Resource<T> {
-  return {
-    type: NodeType.Resource,
-    name: options.name || `resource-${getID()}`,
-    compute,
-    isEqual: IS_EQUAL,
-  };
-}
-
 export interface ReactiveDomainOptions {
   onError?: (reason: unknown) => void;
 }
@@ -106,12 +69,6 @@ export class ReactiveDomain {
   private atoms = new Map<Atom<any>, AtomNode<any>>();
 
   private computeds = new Map<Computed<any>, ComputedNode<any>>();
-
-  private resources = new Map<Resource<any>, ResourceNode<any>>();
-
-  private effects: (EffectNode | undefined)[] = [];
-
-  private effectsCount = 0;
 
   private observers: (ObserverNode<any> | undefined)[] = [];
 
@@ -135,21 +92,6 @@ export class ReactiveDomain {
       if (observer) {
         destroyObserverNode(observer);
       }
-    }
-    // Destroy all effects
-    for (
-      let i = 0, len = this.effectsCount, effect: EffectNode | undefined;
-      i < len;
-      i++
-    ) {
-      effect = this.effects[i];
-      if (effect) {
-        destroyEffectNode(effect);
-      }
-    }
-    // Destroy all resources
-    for (const [, node] of this.resources) {
-      destroyResourceNode(node);
     }
     // Destroy all computeds
     for (const [, node] of this.computeds) {
@@ -197,17 +139,6 @@ export class ReactiveDomain {
     return instance;
   }
 
-  getResource<T>(source: Resource<T>): ResourceNode<T> {
-    this.assertAlive();
-    const current = this.resources.get(source);
-    if (current) {
-      return current;
-    }
-    const instance = new ResourceNode(source);
-    this.resources.set(source, instance);
-    return instance;
-  }
-
   readAtom<T>(source: Atom<T>): T {
     const instance = this.getAtom(source);
     return instance.value;
@@ -219,20 +150,11 @@ export class ReactiveDomain {
     return readComputed(instance);
   }
 
-  readResource<T>(source: Resource<T>): T {
-    const instance = this.getResource(source);
-    revalidateResource(this, instance);
-    return readResource(instance);
-  }
-
-  get<T>(source: Atom<T> | Computed<T> | Resource<T>): T {
+  get<T>(source: Atom<T> | Computed<T>): T {
     if (source.type === NodeType.Atom) {
       return this.readAtom(source);
     }
-    if (source.type === NodeType.Computed) {
-      return this.readComputed(source);
-    }
-    return this.readResource(source);
+    return this.readComputed(source);
   }
 
   set<T>(source: Atom<T>, value: T) {
@@ -240,21 +162,6 @@ export class ReactiveDomain {
       const instance = this.getAtom(source);
       writeAtomNode(this, instance, value);
     }
-  }
-
-  private destroyEffect(index: number, instance: EffectNode): void {
-    // TODO does order matter?
-    this.effects[index] = this.effects[--this.effectsCount];
-    this.effects[this.effectsCount] = undefined;
-    destroyEffectNode(instance);
-  }
-
-  effect(callback: Effect): Cleanup {
-    this.assertAlive();
-    const instance = new EffectNode(callback);
-    revalidateEffect(this, instance);
-    this.effects.push(instance);
-    return this.destroyEffect.bind(this, this.effectsCount++, instance);
   }
 
   private destroyObserver<T>(index: number, instance: ObserverNode<T>): void {
@@ -265,7 +172,7 @@ export class ReactiveDomain {
   }
 
   observe<T>(
-    source: Atom<T> | Computed<T> | Resource<T>,
+    source: Atom<T> | Computed<T>,
     callback: (value: T) => void,
   ): Cleanup {
     this.assertAlive();
@@ -275,8 +182,6 @@ export class ReactiveDomain {
       trackNode(instance.tracker, this.getAtom(source));
     } else if (source.type === NodeType.Computed) {
       trackNode(instance.tracker, this.getComputed(source));
-    } else if (source.type === NodeType.Resource) {
-      trackNode(instance.tracker, this.getResource(source));
     }
     this.observers.push(instance);
     return (this.destroyObserver<T>).bind(
@@ -290,7 +195,7 @@ export class ReactiveDomain {
 export class TrackerContext {
   constructor(private parent: TrackerContextInternal) {}
 
-  get<T>(source: Atom<T> | Computed<T> | Resource<T>): T {
+  get<T>(source: Atom<T> | Computed<T>): T {
     return this.parent.get(source);
   }
 
@@ -299,7 +204,7 @@ export class TrackerContext {
   }
 
   onCleanup(cleanup: Cleanup): void {
-    this.onCleanup(cleanup);
+    this.parent.onCleanup(cleanup);
   }
 }
 
@@ -330,23 +235,11 @@ class TrackerContextInternal {
     return readComputed(instance);
   }
 
-  readResource<T>(source: Resource<T>): T {
-    const instance = this.domain.getResource(source);
-    revalidateResource(this.domain, instance);
-    if (this.alive) {
-      trackNode(this.tracker, instance);
-    }
-    return readResource(instance);
-  }
-
-  get<T>(source: Atom<T> | Computed<T> | Resource<T>): T {
+  get<T>(source: Atom<T> | Computed<T>): T {
     if (source.type === NodeType.Atom) {
       return this.readAtom(source);
     }
-    if (source.type === NodeType.Computed) {
-      return this.readComputed(source);
-    }
-    return this.readResource(source);
+    return this.readComputed(source);
   }
 
   set<T>(source: Atom<T>, value: T) {
@@ -365,11 +258,17 @@ class TrackerContextInternal {
   destroy() {
     if (this.alive) {
       this.alive = false;
-      // todo
+
+      for (let i = 0, len = this.cleanups.length; i < len; i++) {
+        this.cleanups[i]();
+      }
     }
   }
 }
 
+/**
+ * A Tracker is just a fancy keyword for observables
+ */
 class Trackable {
   alive = true;
   version = 0;
@@ -378,6 +277,9 @@ class Trackable {
   constructor(public parent: TrackableNode<any>) {}
 }
 
+/**
+ * A Tracker is just a fancy keyword for observers
+ */
 class Tracker {
   alive = true;
   state: State = State.Uninitialized;
@@ -421,38 +323,9 @@ class ComputedNode<T> {
   constructor(public source: Computed<T>) {}
 }
 
-export type AsyncComputation<T> = (
-  $: TrackerContext,
-  prev: Ref<T> | undefined,
-) => Promise<T>;
-
-type ResourceResult<T> =
-  | ComputedResult<T>
-  | { type: ComputedState.Pending; value: Promise<T> };
-
-class ResourceNode<T> {
-  type: NodeType.Resource = NodeType.Resource;
-
-  trackable = new Trackable(this);
-
-  tracker = new Tracker(this);
-
-  state: ResourceResult<T> | undefined;
-
-  prev: Ref<T> | undefined;
-
-  constructor(public source: Resource<T>) {}
-}
-
-export type Effect = ($: TrackerContext) => void;
-
-class EffectNode {
-  type: NodeType.Effect = NodeType.Effect;
-
-  tracker = new Tracker(this);
-
-  constructor(public source: Effect) {}
-}
+export type BaseOptions = {
+  onError?: (value: unknown) => void;
+};
 
 class ObserverNode<T> {
   type: NodeType.Observer = NodeType.Observer;
@@ -460,8 +333,9 @@ class ObserverNode<T> {
   tracker = new Tracker(this);
 
   constructor(
-    public source: Atom<T> | Computed<T> | Resource<T>,
+    public source: Atom<T> | Computed<T>,
     public compute: (value: T) => void,
+    public options?: BaseOptions,
   ) {}
 }
 
@@ -528,15 +402,25 @@ function destroyComputedNode<T>(node: ComputedNode<T>): void {
   destroyTracker(node.tracker);
   destroyTrackable(node.trackable);
 }
-function destroyResourceNode<T>(node: ResourceNode<T>): void {
-  destroyTracker(node.tracker);
-  destroyTrackable(node.trackable);
-}
-function destroyEffectNode(node: EffectNode): void {
-  destroyTracker(node.tracker);
-}
 function destroyObserverNode<T>(node: ObserverNode<T>): void {
   destroyTracker(node.tracker);
+}
+
+function handleError(
+  domain: ReactiveDomain,
+  error: unknown,
+  options?: BaseOptions,
+): void {
+  if (options?.onError) {
+    try {
+      options.onError(error);
+    } catch (newError) {
+      domain.handleError(error);
+      domain.handleError(newError);
+    }
+  } else {
+    domain.handleError(error);
+  }
 }
 
 function notifyTrackers(
@@ -554,20 +438,14 @@ function notifyTrackers(
   }
   // 1st step, notify each tracker with the new state
   // This is a recursive process, which defers
-  // any effects from immediately occuring
+  // any observers from immediately occuring
   for (const tracker of trackers) {
-    if (
-      tracker.parent.type === NodeType.Computed ||
-      tracker.parent.type === NodeType.Resource
-    ) {
+    if (tracker.parent.type === NodeType.Computed) {
       notifyTrackers(domain, tracker.parent.trackable, State.Check);
     }
   }
-  // 2nd step, run the effects.
+  // 2nd step, run the observers.
   for (const tracker of trackers) {
-    if (tracker.parent.type === NodeType.Effect) {
-      revalidateEffect(domain, tracker.parent);
-    }
     if (tracker.parent.type === NodeType.Observer) {
       revalidateObserver(domain, tracker.parent);
     }
@@ -587,21 +465,9 @@ function writeTrackable(
   }
 }
 
-function writeResourcePending<T>(
+function writeComputedSuccess<T>(
   domain: ReactiveDomain,
-  node: ResourceNode<T>,
-  value: Promise<T>,
-): void {
-  const shouldNotify = !(
-    node.state && node.state.type === ComputedState.Pending
-  );
-  node.state = { type: ComputedState.Pending, value };
-  writeTrackable(domain, node.trackable, shouldNotify);
-}
-
-function writeComputationSuccess<T>(
-  domain: ReactiveDomain,
-  node: ComputationNode<T>,
+  node: ComputedNode<T>,
   value: T,
 ): void {
   if (
@@ -616,9 +482,9 @@ function writeComputationSuccess<T>(
   writeTrackable(domain, node.trackable, true);
 }
 
-function writeComputationFailure<T>(
+function writeComputedFailure<T>(
   domain: ReactiveDomain,
-  node: ComputationNode<T>,
+  node: ComputedNode<T>,
   error: unknown,
 ): void {
   node.state = { type: ComputedState.Failure, value: error };
@@ -639,25 +505,6 @@ function writeAtomNode<T>(
     node.value = value;
     writeTrackable(domain, node.trackable, true);
   }
-}
-
-function readResource<T>(node: ResourceNode<T>): T {
-  if (node.state) {
-    if (node.state.type === ComputedState.Pending) {
-      // TODO stale boundary
-      throw new ResourceNotReadyError(node.state.value);
-    }
-    if (node.state.type === ComputedState.Success) {
-      // If the result succeeded, return
-      return node.state.value;
-    }
-    if (node.state.type === ComputedState.Failure) {
-      // ...otherwise, rethrow the error.
-      throw node.state.value;
-    }
-  }
-  // This shouldn't happen at all
-  throw new Error('Node is uninitialized.');
 }
 
 function readComputed<T>(node: ComputedNode<T>): T {
@@ -693,7 +540,7 @@ function updateComputed<T>(
   cleanTrackables(node.tracker);
   node.tracker.state = State.Clean;
   try {
-    writeComputationSuccess(
+    writeComputedSuccess(
       domain,
       node,
       node.source.compute(
@@ -702,67 +549,7 @@ function updateComputed<T>(
       ),
     );
   } catch (error) {
-    writeComputationFailure(domain, node, error);
-  }
-}
-
-function resolveResource<T>(
-  this: ResourceNode<T>,
-  domain: ReactiveDomain,
-  version: number,
-  value: T,
-): void {
-  if (this.trackable.version === version) {
-    writeComputationSuccess(domain, this, value);
-  }
-}
-
-function rejectResource<T>(
-  this: ResourceNode<T>,
-  domain: ReactiveDomain,
-  version: number,
-  value: unknown,
-): void {
-  if (this.trackable.version === version) {
-    writeComputationFailure(domain, this, value);
-  }
-}
-
-function updateResource<T>(
-  domain: ReactiveDomain,
-  node: ResourceNode<T>,
-): void {
-  cleanTrackables(node.tracker);
-  node.tracker.state = State.Clean;
-  try {
-    const result = Promise.resolve(
-      node.source.compute(
-        updateTrackerContext(domain, node.tracker),
-        node.prev,
-      ),
-    );
-    writeResourcePending(domain, node, result);
-    const version = node.trackable.version;
-    result.then(
-      (resolveResource<T>).bind(node, domain, version),
-      (rejectResource<T>).bind(node, domain, version),
-    );
-  } catch (error) {
-    writeComputationFailure(domain, node, error);
-  }
-}
-
-function updateEffect(domain: ReactiveDomain, node: EffectNode): void {
-  cleanTrackables(node.tracker);
-  node.tracker.state = State.Clean;
-  try {
-    node.source(updateTrackerContext(domain, node.tracker));
-  } catch (error) {
-    if (error instanceof ResourceNotReadyError) {
-      // do nothing
-    } else {
-      domain.handleError(error);
-    }
+    writeComputedFailure(domain, node, error);
   }
 }
 
@@ -780,17 +567,9 @@ function updateObserver<T>(
       const instance = domain.getComputed(node.source);
       revalidateComputed(domain, instance);
       node.compute(readComputed(instance));
-    } else if (type === NodeType.Resource) {
-      const instance = domain.getResource(node.source);
-      revalidateResource(domain, instance);
-      node.compute(readResource(instance));
     }
   } catch (error) {
-    if (error instanceof ResourceNotReadyError) {
-      // TODO
-    } else {
-      domain.handleError(error);
-    }
+    handleError(domain, error, node.options);
   }
 }
 
@@ -800,9 +579,6 @@ function isTrackerDirty(domain: ReactiveDomain, node: Tracker): boolean {
     for (const trackable of [...node.trackables]) {
       if (trackable.parent.type === NodeType.Computed) {
         revalidateComputed(domain, trackable.parent);
-      }
-      if (trackable.parent.type === NodeType.Resource) {
-        revalidateResource(domain, trackable.parent);
       }
       if ((node as any).state === State.Dirty) {
         return true;
@@ -834,21 +610,6 @@ function revalidateComputed<T>(
 ): void {
   if (canTrackerUpdate(domain, node.tracker)) {
     updateComputed(domain, node);
-  }
-}
-
-function revalidateResource<T>(
-  domain: ReactiveDomain,
-  node: ResourceNode<T>,
-): void {
-  if (canTrackerUpdate(domain, node.tracker)) {
-    updateResource(domain, node);
-  }
-}
-
-function revalidateEffect(domain: ReactiveDomain, node: EffectNode): void {
-  if (canTrackerUpdate(domain, node.tracker)) {
-    updateEffect(domain, node);
   }
 }
 
