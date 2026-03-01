@@ -4,6 +4,12 @@
 	"workspaces": ["packages/*", "examples/*"],
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.4",
+    "@changesets/cli": "^2.29.7",
 		"typescript": "^5.9.3"
-	}
+	},
+  "scripts": {
+    "cs:ver": "changeset version",
+    "cs:pub": "changeset publish",
+    "cs:add": "changeset add"
+  }
 }
