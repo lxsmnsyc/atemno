@@ -12,12 +12,9 @@ const receiver = atom('World');
 
 const message = computed(($) => `${$.get(greeting)}, ${$.get(receiver)}!`);
 
-// domain.observe(message, (value) => {
-//   console.log('received', value);
-// });
-
-domain.effect(($) => {
-  console.log('received', $.get(message));
-})
+domain.observe(message, (value) => {
+  console.log('received', value);
+});
 
 domain.set(greeting, 'Bonjour');
+domain.set(receiver, 'France');

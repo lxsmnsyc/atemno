@@ -39,11 +39,11 @@
     "*": {}
   },
   "devDependencies": {
-    "@types/node": "^22.13.2",
+    "@types/node": "^25.3.3",
     "pridepack": "^2.6.4",
     "tslib": "^2.8.1",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.5"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "types": "./dist/types/index.d.ts",
   "main": "./dist/cjs/production/index.cjs",
