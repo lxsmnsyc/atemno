@@ -164,6 +164,16 @@ export class ReactiveDomain {
     }
   }
 
+  reset<T>(source: Atom<T> | Computed<T>): void {
+    if (source.type === NodeType.Atom) {
+      const instance = this.getAtom(source);
+      writeAtomNode(this, instance, source.initialValue);
+    } else {
+      const instance = this.getComputed(source);
+      updateComputed(this, instance);
+    }
+  }
+
   private destroyObserver<T>(index: number, instance: ObserverNode<T>): void {
     // TODO does order matter?
     this.observers[index] = this.observers[--this.observersCount];
@@ -189,6 +199,10 @@ export class ReactiveDomain {
       this.observersCount++,
       instance,
     );
+  }
+
+  getAction<T, R>(action: Action<T, R>): NormalAction<T, R> {
+    return (bindAction<T, R>).bind(this, action);
   }
 }
 
@@ -246,6 +260,18 @@ class TrackerContextInternal {
     if (this.alive) {
       const instance = this.domain.getAtom(source);
       writeAtomNode(this.domain, instance, value);
+    }
+  }
+
+  reset<T>(source: Atom<T> | Computed<T>): void {
+    if (this.alive) {
+      if (source.type === NodeType.Atom) {
+        const instance = this.domain.getAtom(source);
+        writeAtomNode(this.domain, instance, source.initialValue);
+      } else {
+        const instance = this.domain.getComputed(source);
+        updateComputed(this.domain, instance);
+      }
     }
   }
 
@@ -620,4 +646,35 @@ function revalidateObserver<T>(
   if (canTrackerUpdate(domain, node.tracker)) {
     updateObserver(domain, node);
   }
+}
+
+export class ActionContext {
+  constructor(private parent: ReactiveDomain) {}
+
+  get<T>(source: Atom<T> | Computed<T>): T {
+    return this.parent.get(source);
+  }
+
+  set<T>(source: Atom<T>, value: T): void {
+    this.parent.set(source, value);
+  }
+
+  reset<T>(source: Atom<T> | Computed<T>): void {
+    this.parent.reset(source);
+  }
+}
+
+export type Action<T, R> = ($: ActionContext, value: T) => R;
+export type NormalAction<T, R> = (value: T) => R;
+
+export function action<T, R>(callback: Action<T, R>) {
+  return callback;
+}
+
+function bindAction<T, R>(
+  this: ReactiveDomain,
+  action: Action<T, R>,
+  value: T,
+): R {
+  return action(new ActionContext(this), value);
 }

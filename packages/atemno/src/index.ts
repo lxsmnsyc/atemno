@@ -1,6 +1,7 @@
 export {
   atom,
   computed,
+  action,
   ReactiveDomain,
   TrackerContext,
 } from './graph';
