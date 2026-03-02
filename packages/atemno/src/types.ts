@@ -38,3 +38,31 @@ export const enum ComputedState {
 export interface Ref<T> {
   value: T;
 }
+
+export interface Atom<T> {
+  type: NodeType.Atom;
+  name: string;
+  initialValue: T;
+  isEqual: IsEqual<T>;
+}
+
+
+export type Computation<T> = ($: TrackerContext, prev: Ref<T> | undefined) => T;
+
+export interface Computed<T> {
+  type: NodeType.Computed;
+  name: string;
+  compute: Computation<T>;
+  isEqual: IsEqual<T>;
+}
+
+
+export interface ActionContext {
+  get<T>(source: Atom<T> | Computed<T>): T;
+  set<T>(source: Atom<T>, value: T): void;
+  reset<T>(source: Atom<T> | Computed<T>): void;
+}
+
+export interface TrackerContext extends ActionContext {
+  onCleanup(cleanup: Cleanup): void;
+}

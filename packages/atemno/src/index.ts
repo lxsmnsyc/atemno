@@ -1,18 +1,14 @@
 export {
+  action,
   atom,
   computed,
-  action,
   ReactiveDomain,
-  TrackerContext,
 } from './graph';
 export type {
   Atom,
-  AtomOptions,
+  Cleanup,
   Computation,
   Computed,
-  ComputedOptions,
-} from './graph';
-export type {
-  Cleanup,
   IsEqual,
+  TrackerContext,
 } from './types';

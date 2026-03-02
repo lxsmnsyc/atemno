@@ -1,61 +1,39 @@
 import { IS_EQUAL } from './constants';
-import type { Cleanup, IsEqual, Ref } from './types';
+import type {
+  ActionContext,
+  Atom,
+  Cleanup,
+  Computation,
+  Computed,
+  IsEqual,
+  Ref,
+  TrackerContext,
+} from './types';
 import { ComputedState, NodeType, State } from './types';
 
-type TrackableNode<T> = AtomNode<T> | ComputedNode<T>;
-type TrackerNode<T> = ComputedNode<T> | ObserverNode<T>;
-
-let ID = 0;
-
-function getID(): number {
-  return ID++;
-}
-
-export interface AtomOptions<T> {
-  name?: string;
-  isEqual?: IsEqual<T>;
-}
-
-export interface Atom<T> {
-  type: NodeType.Atom;
-  name: string;
-  initialValue: T;
-  isEqual: IsEqual<T>;
-}
-
 export function atom<T>(
+  name: string,
   initialValue: T,
-  options: AtomOptions<T> = {},
+  isEqual?: IsEqual<T>,
 ): Atom<T> {
   return {
     type: NodeType.Atom,
-    name: options.name || `atom-${getID()}`,
+    name,
     initialValue,
-    isEqual: IS_EQUAL,
+    isEqual: isEqual ?? IS_EQUAL,
   };
 }
 
-export interface ComputedOptions<T> {
-  name?: string;
-  isEqual?: IsEqual<T>;
-}
-
-export interface Computed<T> {
-  type: NodeType.Computed;
-  name: string;
-  compute: Computation<T>;
-  isEqual: IsEqual<T>;
-}
-
 export function computed<T>(
+  name: string,
   compute: Computation<T>,
-  options: ComputedOptions<T> = {},
+  isEqual?: IsEqual<T>,
 ): Computed<T> {
   return {
     type: NodeType.Computed,
-    name: options.name || `computed-${getID()}`,
+    name,
     compute,
-    isEqual: IS_EQUAL,
+    isEqual: isEqual ?? IS_EQUAL,
   };
 }
 
@@ -186,18 +164,28 @@ export class ReactiveDomain {
     callback: (value: T) => void,
   ): Cleanup {
     this.assertAlive();
-    const instance = new ObserverNode(source, callback);
-    revalidateObserver(this, instance);
+    // Create an observer node
+    const observer = new ObserverNode(source, callback);
+
+    // Track the source
     if (source.type === NodeType.Atom) {
-      trackNode(instance.tracker, this.getAtom(source));
+      trackNode(observer.tracker, this.getAtom(source));
     } else if (source.type === NodeType.Computed) {
-      trackNode(instance.tracker, this.getComputed(source));
+      const instance = this.getComputed(source);
+      trackNode(observer.tracker, instance);
+      // Ensure that the computed has been initialized
+      // so that the observer is recognized before
+      // tracking
+      revalidateComputed(this, instance);
     }
-    this.observers.push(instance);
+
+    // Add to active observers
+    this.observers.push(observer);
+
     return (this.destroyObserver<T>).bind(
       this,
       this.observersCount++,
-      instance,
+      observer,
     );
   }
 
@@ -206,26 +194,8 @@ export class ReactiveDomain {
   }
 }
 
-export class TrackerContext {
-  constructor(private parent: TrackerContextInternal) {}
-
-  get<T>(source: Atom<T> | Computed<T>): T {
-    return this.parent.get(source);
-  }
-
-  set<T>(source: Atom<T>, value: T): void {
-    this.parent.set(source, value);
-  }
-
-  onCleanup(cleanup: Cleanup): void {
-    this.parent.onCleanup(cleanup);
-  }
-}
-
 class TrackerContextInternal {
   alive = true;
-
-  child = new TrackerContext(this);
 
   constructor(
     public domain: ReactiveDomain,
@@ -292,6 +262,9 @@ class TrackerContextInternal {
   }
 }
 
+type TrackableNode<T> = AtomNode<T> | ComputedNode<T>;
+type TrackerNode<T> = ComputedNode<T> | ObserverNode<T>;
+
 /**
  * A Tracker is just a fancy keyword for observables
  */
@@ -326,8 +299,6 @@ class AtomNode<T> {
     this.value = source.initialValue;
   }
 }
-
-export type Computation<T> = ($: TrackerContext, prev: Ref<T> | undefined) => T;
 
 type SuccessResult<T> = { type: ComputedState.Success; value: T };
 
@@ -548,6 +519,15 @@ function readComputed<T>(node: ComputedNode<T>): T {
   throw new Error('Node is uninitialized.');
 }
 
+function createTrackerContext(parent: TrackerContextInternal): TrackerContext {
+  return {
+    get: parent.get.bind(parent),
+    set: parent.set.bind(parent),
+    reset: parent.reset.bind(parent),
+    onCleanup: parent.onCleanup.bind(parent),
+  };
+}
+
 function updateTrackerContext(
   domain: ReactiveDomain,
   node: Tracker,
@@ -556,15 +536,18 @@ function updateTrackerContext(
     node.context.destroy();
   }
   node.context = new TrackerContextInternal(domain, node);
-  return node.context.child;
+  return createTrackerContext(node.context);
 }
 
 function updateComputed<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
 ): void {
+  // Mark this node clean
   cleanTrackables(node.tracker);
   node.tracker.state = State.Clean;
+
+  // Attempt to recompute
   try {
     writeComputedSuccess(
       domain,
@@ -648,22 +631,6 @@ function revalidateObserver<T>(
   }
 }
 
-export class ActionContext {
-  constructor(private parent: ReactiveDomain) {}
-
-  get<T>(source: Atom<T> | Computed<T>): T {
-    return this.parent.get(source);
-  }
-
-  set<T>(source: Atom<T>, value: T): void {
-    this.parent.set(source, value);
-  }
-
-  reset<T>(source: Atom<T> | Computed<T>): void {
-    this.parent.reset(source);
-  }
-}
-
 export type Action<T, R> = ($: ActionContext, value: T) => R;
 export type NormalAction<T, R> = (value: T) => R;
 
@@ -676,5 +643,10 @@ function bindAction<T, R>(
   action: Action<T, R>,
   value: T,
 ): R {
-  return action(new ActionContext(this), value);
+  const context: ActionContext = {
+    get: this.get.bind(this),
+    set: this.set.bind(this),
+    reset: this.reset.bind(this),
+  };
+  return action(context, value);
 }

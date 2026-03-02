@@ -1,4 +1,6 @@
-import { ReactiveDomain, atom, computed } from './dist/esm/development/index.mjs';
+import { atom, computed, ReactiveDomain } from './dist/esm/development/index.mjs';
+
+const sleep = async (value, ms) => new Promise((res) => setTimeout(res, ms, value));
 
 const domain = new ReactiveDomain({
   onError(error) {
@@ -6,15 +8,22 @@ const domain = new ReactiveDomain({
   },
 });
 
-const greeting = atom('Hello');
+const greeting = atom('greeting', 'Hello');
 
-const receiver = atom('World');
+const receiver = atom('receiver', 'World');
 
-const message = computed(($) => `${$.get(greeting)}, ${$.get(receiver)}!`);
+const message = computed('message', async ($) => {
+  await sleep(true, 500)
+  const value = `${$.get(greeting)}, ${$.get(receiver)}!`;
+  return value;
+});
 
-domain.observe(message, (value) => {
-  console.log('received', value);
+domain.observe(message, async (value) => {
+  console.log('received', await value);
 });
 
 domain.set(greeting, 'Bonjour');
-domain.set(receiver, 'France');
+
+setTimeout(() => {
+  domain.set(receiver, 'France');
+}, 1000);
