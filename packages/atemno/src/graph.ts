@@ -68,17 +68,22 @@ export class ReactiveDomain {
     ) {
       observer = this.observers[i];
       if (observer) {
-        destroyObserverNode(observer);
+        destroyObserverNode(this, observer);
       }
     }
     // Destroy all computeds
     for (const [, node] of this.computeds) {
-      destroyComputedNode(node);
+      destroyComputedNode(this, node);
     }
     // Destroy all atoms
     for (const [, node] of this.atoms) {
       destroyAtomNode(node);
     }
+
+    this.computeds.clear();
+    this.atoms.clear();
+
+    this.alive = false;
   }
 
   private assertAlive(): void {
@@ -128,6 +133,18 @@ export class ReactiveDomain {
     return readComputed(instance);
   }
 
+  destroyAtom<T>(source: Atom<T>): void {
+    const instance = this.getAtom(source);
+    destroyAtomNode(instance);
+    this.atoms.delete(source);
+  }
+
+  destroyComputed<T>(source: Computed<T>): void {
+    const instance = this.getComputed(source);
+    destroyComputedNode(this, instance);
+    this.computeds.delete(source);
+  }
+
   get<T>(source: Atom<T> | Computed<T>): T {
     if (source.type === NodeType.Atom) {
       return this.readAtom(source);
@@ -156,7 +173,7 @@ export class ReactiveDomain {
     // TODO does order matter?
     this.observers[index] = this.observers[--this.observersCount];
     this.observers[this.observersCount] = undefined;
-    destroyObserverNode(instance);
+    destroyObserverNode(this, instance);
   }
 
   observe<T>(
@@ -362,13 +379,22 @@ function cleanTrackers(node: Trackable): void {
   node.trackers.clear();
 }
 
-function cleanTrackables(node: Tracker): void {
+function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
   if (!(node.trackables && node.trackables.size)) {
     return;
   }
   for (const trackable of [...node.trackables]) {
     if (trackable.trackers) {
       trackable.trackers.delete(node);
+
+      // If there's 0 trackers, might as well destroy the node
+      if (trackable.trackers.size === 0) {
+        if (trackable.parent.type === NodeType.Atom) {
+          domain.destroyAtom(trackable.parent.source);
+        } else {
+          domain.destroyComputed(trackable.parent.source);
+        }
+      }
     }
   }
 
@@ -382,25 +408,25 @@ function destroyTrackable(instance: Trackable): void {
   }
 }
 
-function destroyTracker(instance: Tracker): void {
+function destroyTracker(domain: ReactiveDomain, instance: Tracker): void {
   if (instance.alive) {
     instance.alive = false;
     if (instance.context) {
       instance.context.destroy();
     }
-    cleanTrackables(instance);
+    cleanTrackables(domain, instance);
   }
 }
 
 function destroyAtomNode<T>(node: AtomNode<T>): void {
   destroyTrackable(node.trackable);
 }
-function destroyComputedNode<T>(node: ComputedNode<T>): void {
-  destroyTracker(node.tracker);
+function destroyComputedNode<T>(domain: ReactiveDomain, node: ComputedNode<T>): void {
+  destroyTracker(domain, node.tracker);
   destroyTrackable(node.trackable);
 }
-function destroyObserverNode<T>(node: ObserverNode<T>): void {
-  destroyTracker(node.tracker);
+function destroyObserverNode<T>(domain: ReactiveDomain, node: ObserverNode<T>): void {
+  destroyTracker(domain, node.tracker);
 }
 
 function handleError(
@@ -544,7 +570,7 @@ function updateComputed<T>(
   node: ComputedNode<T>,
 ): void {
   // Mark this node clean
-  cleanTrackables(node.tracker);
+  cleanTrackables(domain, node.tracker);
   node.tracker.state = State.Clean;
 
   // Attempt to recompute
