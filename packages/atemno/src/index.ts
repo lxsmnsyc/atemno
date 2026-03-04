@@ -12,3 +12,11 @@ export type {
   IsEqual,
   TrackerContext,
 } from './types';
+export {
+  atomFactory,
+  computedFactory,
+} from './utils';
+export type {
+  AtomFactoryOptions,
+  ComputedFactoryOptions,
+} from './utils';

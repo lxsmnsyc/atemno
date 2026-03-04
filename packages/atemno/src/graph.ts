@@ -11,6 +11,12 @@ import type {
 } from './types';
 import { ComputedState, NodeType, State } from './types';
 
+/**
+ * Creates a writable state.
+ * @param name a unique string to represent the atom
+ * @param initialValue the initial state of the atom
+ * @param isEqual tells whether the atom should update with the new value
+ */
 export function atom<T>(
   name: string,
   initialValue: T,
@@ -24,6 +30,13 @@ export function atom<T>(
   };
 }
 
+/**
+ * Creates a computed state that produces a value based from other atoms or computeds
+ * @param name a unique string to represent the computed
+ * @param compute a function that produces the state of the computed
+ * @param isEqual tells whether the computed should update with the new produced value
+ * @returns 
+ */
 export function computed<T>(
   name: string,
   compute: Computation<T>,
@@ -38,15 +51,25 @@ export function computed<T>(
 }
 
 export interface ReactiveDomainOptions {
+  /**
+   * A default error handler that catches unhandled errors
+   * from computeds and observers
+   * @param reason the error cause
+   */
   onError?: (reason: unknown) => void;
 }
 
+/**
+ * A ReactiveDomain represents a boundary for where atoms and computeds can be instanciated
+ * and the lifecycles managed. States of atoms and computeds are stored in a ReactiveDomain,
+ * as well as processing of computeds and observers.
+ */
 export class ReactiveDomain {
   private alive = true;
 
-  private atoms = new Map<Atom<any>, AtomNode<any>>();
+  private atoms = new Map<string, AtomNode<any>>();
 
-  private computeds = new Map<Computed<any>, ComputedNode<any>>();
+  private computeds = new Map<string, ComputedNode<any>>();
 
   private observers: (ObserverNode<any> | undefined)[] = [];
 
@@ -102,23 +125,23 @@ export class ReactiveDomain {
 
   getAtom<T>(source: Atom<T>): AtomNode<T> {
     this.assertAlive();
-    const current = this.atoms.get(source);
+    const current = this.atoms.get(source.name);
     if (current) {
       return current;
     }
     const instance = new AtomNode(source);
-    this.atoms.set(source, instance);
+    this.atoms.set(source.name, instance);
     return instance;
   }
 
   getComputed<T>(source: Computed<T>): ComputedNode<T> {
     this.assertAlive();
-    const current = this.computeds.get(source);
+    const current = this.computeds.get(source.name);
     if (current) {
       return current;
     }
     const instance = new ComputedNode(source);
-    this.computeds.set(source, instance);
+    this.computeds.set(source.name, instance);
     return instance;
   }
 
@@ -136,13 +159,13 @@ export class ReactiveDomain {
   destroyAtom<T>(source: Atom<T>): void {
     const instance = this.getAtom(source);
     destroyAtomNode(instance);
-    this.atoms.delete(source);
+    this.atoms.delete(source.name);
   }
 
   destroyComputed<T>(source: Computed<T>): void {
     const instance = this.getComputed(source);
     destroyComputedNode(this, instance);
-    this.computeds.delete(source);
+    this.computeds.delete(source.name);
   }
 
   get<T>(source: Atom<T> | Computed<T>): T {

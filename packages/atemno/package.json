@@ -1,20 +1,20 @@
 {
   "version": "0.0.0",
   "type": "module",
-  "name": "compostate",
-  "description": "Composable and reactive state management library",
+  "name": "atemno",
+  "description": "Fine-grained local-global state management library",
   "author": "Alexis Munsayac",
   "license": "MIT",
   "keywords": [
     "pridepack"
   ],
   "repository": {
-    "url": "https://github.com/lxsmnsyc/compostate.git",
+    "url": "https://github.com/lxsmnsyc/atemno.git",
     "type": "git"
   },
-  "homepage": "https://github.com/lxsmnsyc/compostate",
+  "homepage": "https://github.com/lxsmnsyc/atemno",
   "bugs": {
-    "url": "https://github.com/lxsmnsyc/compostate/issues"
+    "url": "https://github.com/lxsmnsyc/atemno/issues"
   },
   "publishConfig": {
     "access": "public"
