@@ -79,6 +79,10 @@ export interface ReactiveDomainOptions {
    * @param reason the error cause
    */
   onError?: (reason: unknown) => void;
+
+  onCreate?: <T>(source: ReadableSource<T> | WritableSource<T>) => void;
+  onUpdate?: <T>(source: ReadableSource<T> | WritableSource<T>) => void;
+  onDestroy?: <T>(source: ReadableSource<T> | WritableSource<T>) => void;
 }
 
 /**
@@ -147,6 +151,18 @@ export class ReactiveDomain {
     }
   }
 
+  onCreate<T>(source: ReadableSource<T> | WritableSource<T>): void {
+    this.options?.onCreate?.(source);
+  }
+
+  onUpdate<T>(source: ReadableSource<T> | WritableSource<T>): void {
+    this.options?.onUpdate?.(source);
+  }
+
+  onDestroy<T>(source: ReadableSource<T> | WritableSource<T>): void {
+    this.options?.onDestroy?.(source);
+  }
+
   getAtom<T>(source: Atom<T>): AtomNode<T> {
     this.assertAlive();
     const current = this.atoms.get(source.name);
@@ -155,6 +171,7 @@ export class ReactiveDomain {
     }
     const instance = new AtomNode(source);
     this.atoms.set(source.name, instance);
+    this.onCreate(source);
     return instance;
   }
 
@@ -166,6 +183,7 @@ export class ReactiveDomain {
     }
     const instance = new ComputedNode(source);
     this.computeds.set(source.name, instance);
+    this.onCreate(source);
     return instance;
   }
 
@@ -177,6 +195,7 @@ export class ReactiveDomain {
     }
     const instance = new LazyAtomNode(source);
     this.lazyAtoms.set(source.name, instance);
+    this.onCreate(source);
     return instance;
   }
 
@@ -200,18 +219,21 @@ export class ReactiveDomain {
     const instance = this.getAtom(source);
     destroyAtomNode(instance);
     this.atoms.delete(source.name);
+    this.onDestroy(source);
   }
 
   destroyComputed<T>(source: Computed<T>): void {
     const instance = this.getComputed(source);
     destroyComputedNode(this, instance);
     this.computeds.delete(source.name);
+    this.onDestroy(source);
   }
 
   destroyLazyAtom<T>(source: LazyAtom<T>): void {
     const instance = this.getLazyAtom(source);
     destroyAtomNode(instance);
     this.atoms.delete(source.name);
+    this.onDestroy(source);
   }
 
   get<T>(source: ReadableSource<T>): T {
@@ -340,43 +362,22 @@ class TrackerContextInternal {
 
   set<T>(source: WritableSource<T>, value: T) {
     if (this.alive) {
-      switch (source.type) {
-        case NodeType.Atom:
-          writeAtomNode(this.domain, this.domain.getAtom(source), value);
-          break;
-        case NodeType.LazyAtom:
-          writeAtomNode(this.domain, this.domain.getLazyAtom(source), value);
-          break;
-      }
+      this.domain.set(source, value);
     }
   }
 
   reset<T>(source: ReadableSource<T>): void {
-    switch (source.type) {
-      case NodeType.Atom:
-        writeAtomNode(
-          this.domain,
-          this.domain.getAtom(source),
-          source.initialValue,
-        );
-        break;
-      case NodeType.LazyAtom:
-        writeAtomNode(
-          this.domain,
-          this.domain.getLazyAtom(source),
-          source.initialValue(),
-        );
-        break;
-      case NodeType.Computed:
-        updateComputed(this.domain, this.domain.getComputed(source));
-        break;
+    if (this.alive) {
+      this.domain.reset(source);
     }
   }
 
   private cleanups: Cleanup[] = [];
 
   onCleanup(cleanup: Cleanup): void {
-    this.cleanups.push(cleanup);
+    if (this.alive) {
+      this.cleanups.push(cleanup);
+    }
   }
 
   destroy() {
@@ -638,6 +639,7 @@ function writeComputedSuccess<T>(
   node.prev = { value };
   node.state = { type: ComputedState.Success, value };
   writeTrackable(domain, node.trackable, true);
+  domain.onUpdate(node.source);
 }
 
 function writeComputedFailure<T>(
@@ -647,6 +649,7 @@ function writeComputedFailure<T>(
 ): void {
   node.state = { type: ComputedState.Failure, value: error };
   writeTrackable(domain, node.trackable, true);
+  domain.onUpdate(node.source);
 }
 
 function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
@@ -662,6 +665,8 @@ function writeAtomNode<T>(
   if (!node.source.isEqual(node.value, value)) {
     node.value = value;
     writeTrackable(domain, node.trackable, true);
+
+    domain.onUpdate(node.source);
   }
 }
 
