@@ -35,7 +35,7 @@ export function atom<T>(
  * @param name a unique string to represent the computed
  * @param compute a function that produces the state of the computed
  * @param isEqual tells whether the computed should update with the new produced value
- * @returns 
+ * @returns
  */
 export function computed<T>(
   name: string,
@@ -444,11 +444,17 @@ function destroyTracker(domain: ReactiveDomain, instance: Tracker): void {
 function destroyAtomNode<T>(node: AtomNode<T>): void {
   destroyTrackable(node.trackable);
 }
-function destroyComputedNode<T>(domain: ReactiveDomain, node: ComputedNode<T>): void {
+function destroyComputedNode<T>(
+  domain: ReactiveDomain,
+  node: ComputedNode<T>,
+): void {
   destroyTracker(domain, node.tracker);
   destroyTrackable(node.trackable);
 }
-function destroyObserverNode<T>(domain: ReactiveDomain, node: ObserverNode<T>): void {
+function destroyObserverNode<T>(
+  domain: ReactiveDomain,
+  node: ObserverNode<T>,
+): void {
   destroyTracker(domain, node.tracker);
 }
 
@@ -568,24 +574,29 @@ function readComputed<T>(node: ComputedNode<T>): T {
   throw new Error('Node is uninitialized.');
 }
 
-function createTrackerContext(parent: TrackerContextInternal): TrackerContext {
+function createTrackerContext<T>(
+  parent: TrackerContextInternal,
+  previous: Ref<T> | undefined,
+): TrackerContext<T> {
   return {
     get: parent.get.bind(parent),
     set: parent.set.bind(parent),
     reset: parent.reset.bind(parent),
     onCleanup: parent.onCleanup.bind(parent),
+    previous,
   };
 }
 
-function updateTrackerContext(
+function updateTrackerContext<T>(
   domain: ReactiveDomain,
   node: Tracker,
-): TrackerContext {
+  previous: Ref<T> | undefined,
+): TrackerContext<T> {
   if (node.context) {
     node.context.destroy();
   }
   node.context = new TrackerContextInternal(domain, node);
-  return createTrackerContext(node.context);
+  return createTrackerContext(node.context, previous);
 }
 
 function updateComputed<T>(
@@ -602,8 +613,7 @@ function updateComputed<T>(
       domain,
       node,
       node.source.compute(
-        updateTrackerContext(domain, node.tracker),
-        node.prev,
+        updateTrackerContext(domain, node.tracker, node.prev),
       ),
     );
   } catch (error) {

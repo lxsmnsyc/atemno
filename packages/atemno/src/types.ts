@@ -46,8 +46,7 @@ export interface Atom<T> {
   isEqual: IsEqual<T>;
 }
 
-
-export type Computation<T> = ($: TrackerContext, prev: Ref<T> | undefined) => T;
+export type Computation<T> = ($: TrackerContext<T>) => T;
 
 export interface Computed<T> {
   type: NodeType.Computed;
@@ -56,13 +55,13 @@ export interface Computed<T> {
   isEqual: IsEqual<T>;
 }
 
-
 export interface ActionContext {
   get<T>(source: Atom<T> | Computed<T>): T;
   set<T>(source: Atom<T>, value: T): void;
   reset<T>(source: Atom<T> | Computed<T>): void;
 }
 
-export interface TrackerContext extends ActionContext {
+export interface TrackerContext<T> extends ActionContext {
   onCleanup(cleanup: Cleanup): void;
+  previous: Ref<T> | undefined;
 }
