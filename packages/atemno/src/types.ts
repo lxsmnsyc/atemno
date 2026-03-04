@@ -27,6 +27,7 @@ export const enum NodeType {
   Computed = 1,
   Resource = 2,
   Observer = 3,
+  LazyAtom = 4,
 }
 
 export const enum ComputedState {
@@ -46,6 +47,13 @@ export interface Atom<T> {
   isEqual: IsEqual<T>;
 }
 
+export interface LazyAtom<T> {
+  type: NodeType.LazyAtom;
+  name: string;
+  initialValue: () => T;
+  isEqual: IsEqual<T>;
+}
+
 export type Computation<T> = ($: TrackerContext<T>) => T;
 
 export interface Computed<T> {
@@ -55,10 +63,13 @@ export interface Computed<T> {
   isEqual: IsEqual<T>;
 }
 
+export type ReadableSource<T> = Atom<T> | Computed<T> | LazyAtom<T>;
+export type WritableSource<T> = Atom<T> | LazyAtom<T>;
+
 export interface ActionContext {
-  get<T>(source: Atom<T> | Computed<T>): T;
-  set<T>(source: Atom<T>, value: T): void;
-  reset<T>(source: Atom<T> | Computed<T>): void;
+  get<T>(source: ReadableSource<T>): T;
+  set<T>(source: WritableSource<T>, value: T): void;
+  reset<T>(source: ReadableSource<T>): void;
 }
 
 export interface TrackerContext<T> extends ActionContext {

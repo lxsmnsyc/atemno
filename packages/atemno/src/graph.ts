@@ -6,8 +6,11 @@ import type {
   Computation,
   Computed,
   IsEqual,
+  LazyAtom,
+  ReadableSource,
   Ref,
   TrackerContext,
+  WritableSource,
 } from './types';
 import { ComputedState, NodeType, State } from './types';
 
@@ -50,6 +53,25 @@ export function computed<T>(
   };
 }
 
+/**
+ * Creates a writable state whose initial state is evaluated on first read.
+ * @param name a unique string to represent the atom
+ * @param initialValue the initial state of the atom
+ * @param isEqual tells whether the atom should update with the new value
+ */
+export function lazyAtom<T>(
+  name: string,
+  initialValue: () => T,
+  isEqual?: IsEqual<T>,
+): LazyAtom<T> {
+  return {
+    type: NodeType.LazyAtom,
+    name,
+    initialValue,
+    isEqual: isEqual ?? IS_EQUAL,
+  };
+}
+
 export interface ReactiveDomainOptions {
   /**
    * A default error handler that catches unhandled errors
@@ -70,6 +92,8 @@ export class ReactiveDomain {
   private atoms = new Map<string, AtomNode<any>>();
 
   private computeds = new Map<string, ComputedNode<any>>();
+
+  private lazyAtoms = new Map<string, LazyAtomNode<any>>();
 
   private observers: (ObserverNode<any> | undefined)[] = [];
 
@@ -145,6 +169,17 @@ export class ReactiveDomain {
     return instance;
   }
 
+  getLazyAtom<T>(source: LazyAtom<T>): LazyAtomNode<T> {
+    this.assertAlive();
+    const current = this.lazyAtoms.get(source.name);
+    if (current) {
+      return current;
+    }
+    const instance = new LazyAtomNode(source);
+    this.lazyAtoms.set(source.name, instance);
+    return instance;
+  }
+
   readAtom<T>(source: Atom<T>): T {
     const instance = this.getAtom(source);
     return instance.value;
@@ -154,6 +189,11 @@ export class ReactiveDomain {
     const instance = this.getComputed(source);
     revalidateComputed(this, instance);
     return readComputed(instance);
+  }
+
+  readLazyAtom<T>(source: LazyAtom<T>): T {
+    const instance = this.getLazyAtom(source);
+    return instance.value;
   }
 
   destroyAtom<T>(source: Atom<T>): void {
@@ -168,27 +208,47 @@ export class ReactiveDomain {
     this.computeds.delete(source.name);
   }
 
-  get<T>(source: Atom<T> | Computed<T>): T {
-    if (source.type === NodeType.Atom) {
-      return this.readAtom(source);
-    }
-    return this.readComputed(source);
+  destroyLazyAtom<T>(source: LazyAtom<T>): void {
+    const instance = this.getLazyAtom(source);
+    destroyAtomNode(instance);
+    this.atoms.delete(source.name);
   }
 
-  set<T>(source: Atom<T>, value: T) {
+  get<T>(source: ReadableSource<T>): T {
+    switch (source.type) {
+      case NodeType.Atom:
+        return this.readAtom(source);
+      case NodeType.Computed:
+        return this.readComputed(source);
+      case NodeType.LazyAtom:
+        return this.readLazyAtom(source);
+    }
+  }
+
+  set<T>(source: WritableSource<T>, value: T) {
     if (this.alive) {
-      const instance = this.getAtom(source);
-      writeAtomNode(this, instance, value);
+      switch (source.type) {
+        case NodeType.Atom:
+          writeAtomNode(this, this.getAtom(source), value);
+          break;
+        case NodeType.LazyAtom:
+          writeAtomNode(this, this.getLazyAtom(source), value);
+          break;
+      }
     }
   }
 
-  reset<T>(source: Atom<T> | Computed<T>): void {
-    if (source.type === NodeType.Atom) {
-      const instance = this.getAtom(source);
-      writeAtomNode(this, instance, source.initialValue);
-    } else {
-      const instance = this.getComputed(source);
-      updateComputed(this, instance);
+  reset<T>(source: ReadableSource<T>): void {
+    switch (source.type) {
+      case NodeType.Atom:
+        writeAtomNode(this, this.getAtom(source), source.initialValue);
+        break;
+      case NodeType.LazyAtom:
+        writeAtomNode(this, this.getLazyAtom(source), source.initialValue());
+        break;
+      case NodeType.Computed:
+        updateComputed(this, this.getComputed(source));
+        break;
     }
   }
 
@@ -250,6 +310,14 @@ class TrackerContextInternal {
     return instance.value;
   }
 
+  readLazyAtom<T>(source: LazyAtom<T>): T {
+    const instance = this.domain.getLazyAtom(source);
+    if (this.alive) {
+      trackNode(this.tracker, instance);
+    }
+    return instance.value;
+  }
+
   readComputed<T>(source: Computed<T>): T {
     const instance = this.domain.getComputed(source);
     revalidateComputed(this.domain, instance);
@@ -259,29 +327,49 @@ class TrackerContextInternal {
     return readComputed(instance);
   }
 
-  get<T>(source: Atom<T> | Computed<T>): T {
-    if (source.type === NodeType.Atom) {
-      return this.readAtom(source);
-    }
-    return this.readComputed(source);
-  }
-
-  set<T>(source: Atom<T>, value: T) {
-    if (this.alive) {
-      const instance = this.domain.getAtom(source);
-      writeAtomNode(this.domain, instance, value);
+  get<T>(source: ReadableSource<T>): T {
+    switch (source.type) {
+      case NodeType.Atom:
+        return this.readAtom(source);
+      case NodeType.Computed:
+        return this.readComputed(source);
+      case NodeType.LazyAtom:
+        return this.readLazyAtom(source);
     }
   }
 
-  reset<T>(source: Atom<T> | Computed<T>): void {
+  set<T>(source: WritableSource<T>, value: T) {
     if (this.alive) {
-      if (source.type === NodeType.Atom) {
-        const instance = this.domain.getAtom(source);
-        writeAtomNode(this.domain, instance, source.initialValue);
-      } else {
-        const instance = this.domain.getComputed(source);
-        updateComputed(this.domain, instance);
+      switch (source.type) {
+        case NodeType.Atom:
+          writeAtomNode(this.domain, this.domain.getAtom(source), value);
+          break;
+        case NodeType.LazyAtom:
+          writeAtomNode(this.domain, this.domain.getLazyAtom(source), value);
+          break;
       }
+    }
+  }
+
+  reset<T>(source: ReadableSource<T>): void {
+    switch (source.type) {
+      case NodeType.Atom:
+        writeAtomNode(
+          this.domain,
+          this.domain.getAtom(source),
+          source.initialValue,
+        );
+        break;
+      case NodeType.LazyAtom:
+        writeAtomNode(
+          this.domain,
+          this.domain.getLazyAtom(source),
+          source.initialValue(),
+        );
+        break;
+      case NodeType.Computed:
+        updateComputed(this.domain, this.domain.getComputed(source));
+        break;
     }
   }
 
@@ -302,7 +390,7 @@ class TrackerContextInternal {
   }
 }
 
-type TrackableNode<T> = AtomNode<T> | ComputedNode<T>;
+type TrackableNode<T> = AtomNode<T> | ComputedNode<T> | LazyAtomNode<T>;
 type TrackerNode<T> = ComputedNode<T> | ObserverNode<T>;
 
 /**
@@ -337,6 +425,18 @@ class AtomNode<T> {
 
   constructor(public source: Atom<T>) {
     this.value = source.initialValue;
+  }
+}
+
+class LazyAtomNode<T> {
+  type: NodeType.LazyAtom = NodeType.LazyAtom;
+
+  trackable = new Trackable(this);
+
+  value: T;
+
+  constructor(public source: LazyAtom<T>) {
+    this.value = source.initialValue();
   }
 }
 
@@ -412,10 +512,16 @@ function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
 
       // If there's 0 trackers, might as well destroy the node
       if (trackable.trackers.size === 0) {
-        if (trackable.parent.type === NodeType.Atom) {
-          domain.destroyAtom(trackable.parent.source);
-        } else {
-          domain.destroyComputed(trackable.parent.source);
+        switch (trackable.parent.type) {
+          case NodeType.Atom:
+            domain.destroyAtom(trackable.parent.source);
+            break;
+          case NodeType.Computed:
+            domain.destroyComputed(trackable.parent.source);
+            break;
+          case NodeType.LazyAtom:
+            domain.destroyLazyAtom(trackable.parent.source);
+            break;
         }
       }
     }
@@ -441,7 +547,7 @@ function destroyTracker(domain: ReactiveDomain, instance: Tracker): void {
   }
 }
 
-function destroyAtomNode<T>(node: AtomNode<T>): void {
+function destroyAtomNode<T>(node: AtomNode<T> | LazyAtomNode<T>): void {
   destroyTrackable(node.trackable);
 }
 function destroyComputedNode<T>(
@@ -550,7 +656,7 @@ function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
 
 function writeAtomNode<T>(
   domain: ReactiveDomain,
-  node: AtomNode<T>,
+  node: AtomNode<T> | LazyAtomNode<T>,
   value: T,
 ): void {
   if (!node.source.isEqual(node.value, value)) {
@@ -627,15 +733,7 @@ function updateObserver<T>(
 ): void {
   node.tracker.state = State.Clean;
   try {
-    const type = node.source.type;
-    if (type === NodeType.Atom) {
-      const instance = domain.getAtom(node.source);
-      node.compute(instance.value);
-    } else if (type === NodeType.Computed) {
-      const instance = domain.getComputed(node.source);
-      revalidateComputed(domain, instance);
-      node.compute(readComputed(instance));
-    }
+    node.compute(domain.get(node.source));
   } catch (error) {
     handleError(domain, error, node.options);
   }
