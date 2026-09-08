@@ -503,32 +503,62 @@ function cleanTrackers(node: Trackable): void {
   node.trackers.clear();
 }
 
+function releaseTrackable(
+  domain: ReactiveDomain,
+  node: Tracker,
+  trackable: Trackable,
+): void {
+  if (!trackable.trackers) {
+    return;
+  }
+  trackable.trackers.delete(node);
+
+  // If there's 0 trackers, might as well destroy the node
+  if (trackable.alive && trackable.trackers.size === 0) {
+    switch (trackable.parent.type) {
+      case NodeType.Atom:
+        domain.destroyAtom(trackable.parent.source);
+        break;
+      case NodeType.Computed:
+        domain.destroyComputed(trackable.parent.source);
+        break;
+      case NodeType.LazyAtom:
+        domain.destroyLazyAtom(trackable.parent.source);
+        break;
+    }
+  }
+}
+
 function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
   if (!(node.trackables && node.trackables.size)) {
     return;
   }
   for (const trackable of [...node.trackables]) {
-    if (trackable.trackers) {
-      trackable.trackers.delete(node);
-
-      // If there's 0 trackers, might as well destroy the node
-      if (trackable.trackers.size === 0) {
-        switch (trackable.parent.type) {
-          case NodeType.Atom:
-            domain.destroyAtom(trackable.parent.source);
-            break;
-          case NodeType.Computed:
-            domain.destroyComputed(trackable.parent.source);
-            break;
-          case NodeType.LazyAtom:
-            domain.destroyLazyAtom(trackable.parent.source);
-            break;
-        }
-      }
-    }
+    releaseTrackable(domain, node, trackable);
   }
 
   node.trackables.clear();
+}
+
+/**
+ * Releases the trackables a tracker depended on before its latest run but did
+ * not track again. Trackables that survived are left untouched, so a
+ * recomputation never destroys a dependency it is about to reuse.
+ */
+function releaseUnusedTrackables(
+  domain: ReactiveDomain,
+  node: Tracker,
+  previous: Set<Trackable> | undefined,
+): void {
+  if (!(previous && previous.size)) {
+    return;
+  }
+  const current = node.trackables;
+  for (const trackable of [...previous]) {
+    if (!(current && current.has(trackable))) {
+      releaseTrackable(domain, node, trackable);
+    }
+  }
 }
 
 function destroyTrackable(instance: Trackable): void {
@@ -714,8 +744,13 @@ function updateComputed<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
 ): void {
+  // Set aside the old dependencies and start collecting a fresh set. They are
+  // only released after the recomputation, so dependencies that get tracked
+  // again are never torn down in between.
+  const previous = node.tracker.trackables;
+  node.tracker.trackables = undefined;
+
   // Mark this node clean
-  cleanTrackables(domain, node.tracker);
   node.tracker.state = State.Clean;
 
   // Attempt to recompute
@@ -730,6 +765,8 @@ function updateComputed<T>(
   } catch (error) {
     writeComputedFailure(domain, node, error);
   }
+
+  releaseUnusedTrackables(domain, node.tracker, previous);
 }
 
 function updateObserver<T>(

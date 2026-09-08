@@ -28,6 +28,9 @@ export const enum NodeType {
   Resource = 2,
   Observer = 3,
   LazyAtom = 4,
+  Proxy = 5,
+  Producer = 6,
+  WeakObserver = 7,
 }
 
 export const enum ComputedState {
