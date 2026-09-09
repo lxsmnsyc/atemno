@@ -20,13 +20,352 @@ pnpm add atemno
 
 ## Features
 
-## Docs
+- Atoms and computeds are plain descriptions of state. They hold no value on their own.
+- A `ReactiveDomain` owns the actual values. The same atom can hold different state in different domains.
+- Computeds track their dependencies automatically, including dependencies that change between runs.
+- Computeds are lazy. They recompute on read, not on write.
+- Nodes are reference counted. A node is released once nothing tracks it any more.
+- No global state, so tests and server rendering get an isolated domain each.
 
-### Introduction
+## Quick start
 
-### `ReactiveDomain` and `atom`
+```js
+import { atom, computed, ReactiveDomain } from 'atemno/core';
 
-###
+const greeting = atom('greeting', 'Hello');
+const receiver = atom('receiver', 'World');
+
+const message = computed(
+  'message',
+  $ => `${$.get(greeting)}, ${$.get(receiver)}!`,
+);
+
+const domain = new ReactiveDomain({
+  onError(error) {
+    console.error(error);
+  },
+});
+
+console.log(domain.get(message)); // "Hello, World!"
+
+domain.observe(message, value => {
+  console.log(value);
+});
+
+domain.set(greeting, 'Bonjour'); // logs "Bonjour, World!"
+```
+
+## Core concepts
+
+### Atoms
+
+An atom is the simplest unit of state. It holds one value, can be written to,
+and can be observed.
+
+```js
+import { atom } from 'atemno/core';
+
+const message = atom(
+  // A unique identifier for this atom
+  'message',
+  // The initial state
+  'Hello, World!',
+);
+```
+
+Creating an atom does not create any state. It only describes state. The name
+must be unique, because a domain looks nodes up by name.
+
+### `ReactiveDomain`
+
+A `ReactiveDomain` is what gives atoms life. It holds the values, runs the
+computeds, and notifies the observers.
+
+```js
+import { ReactiveDomain } from 'atemno/core';
+
+const domain = new ReactiveDomain({
+  onError(error) {
+    console.error(error);
+  },
+});
+
+console.log(domain.get(message)); // "Hello, World!"
+```
+
+Two domains never share state.
+
+```js
+const a = new ReactiveDomain({});
+const b = new ReactiveDomain({});
+
+a.set(message, 'Only in a');
+
+a.get(message); // "Only in a"
+b.get(message); // "Hello, World!"
+```
+
+This makes domains a good fit for per-request state on a server and for test
+isolation.
+
+#### Writing and resetting
+
+```js
+domain.set(message, 'foo, bar!');
+domain.get(message); // "foo, bar!"
+
+domain.reset(message);
+domain.get(message); // "Hello, World!"
+```
+
+A write that produces an equal value is ignored. Nothing recomputes and no
+observer runs. Equality defaults to `Object.is` semantics, so `NaN` equals
+itself. Pass your own check as the third argument.
+
+```js
+const point = atom('point', { x: 0 }, (prev, next) => prev.x === next.x);
+```
+
+#### Observing changes
+
+```js
+const stop = domain.observe(message, value => {
+  console.log('Message:', value);
+});
+
+domain.set(message, 'whut?'); // logs "Message: whut?"
+
+stop();
+```
+
+`observe` returns a cleanup function. Call it to stop listening.
+
+Observing an atom does not call the callback right away. Observing a computed
+calls it right away only when the subscription triggers that computed's first
+evaluation. If something already read the computed in this domain, the callback
+does not run until the next change. Read the value with `domain.get` first if
+you need it up front.
+
+### Computeds
+
+A computed derives a value from other atoms and computeds. It receives a
+tracker context, and every source read through that context becomes a
+dependency.
+
+```js
+import { computed } from 'atemno/core';
+
+const count = atom('count', 1);
+const double = computed('double', $ => $.get(count) * 2);
+
+domain.get(double); // 2
+
+domain.set(count, 5);
+domain.get(double); // 10
+```
+
+Computeds are lazy. Writing to `count` marks `double` as stale but does not run
+it. It recomputes on the next read, or immediately if something observes it.
+
+Computeds also cache. Reading twice without an intervening change runs the
+computation once.
+
+#### Dynamic dependencies
+
+Dependencies are collected on every run, so a branch that is not taken is not
+tracked.
+
+```js
+const toggle = atom('toggle', true);
+const left = atom('left', 'left');
+const right = atom('right', 'right');
+
+const branch = computed('branch', $ =>
+  $.get(toggle) ? $.get(left) : $.get(right),
+);
+
+domain.get(branch); // "left"
+
+// `right` is untracked while the toggle is on, so this changes nothing.
+domain.set(right, 'changed');
+domain.get(branch); // "left"
+
+domain.set(toggle, false);
+domain.get(branch); // "changed"
+```
+
+#### The previous value
+
+`$.previous` holds the result of the last successful run. It is `undefined` on
+the first run.
+
+```js
+const total = computed('total', $ => {
+  const next = $.get(count);
+  return $.previous ? $.previous.value + next : next;
+});
+```
+
+#### Cleanups
+
+`$.onCleanup` registers work to run before the next recomputation.
+
+```js
+const interval = atom('interval', 1000);
+
+const timer = computed('timer', $ => {
+  const id = setInterval(tick, $.get(interval));
+  $.onCleanup(() => clearInterval(id));
+  return id;
+});
+```
+
+#### Errors
+
+An error thrown inside a computation is stored. Every read rethrows it until a
+dependency changes and the computation succeeds.
+
+```js
+const guarded = computed('guarded', $ => {
+  if ($.get(shouldFail)) {
+    throw new Error('boom');
+  }
+  return 'ok';
+});
+
+domain.get(guarded); // throws "boom"
+
+domain.set(shouldFail, false);
+domain.get(guarded); // "ok"
+```
+
+Errors thrown inside an observer callback go to `onError` instead. Without an
+`onError` handler they are rethrown to the caller that triggered the write.
+
+### Actions
+
+An action groups reads and writes behind one function. It is a description
+until a domain binds it, the same way an atom is.
+
+```js
+import { action } from 'atemno/core';
+
+const increment = action(($, amount) => {
+  $.set(count, $.get(count) + amount);
+  return $.get(count);
+});
+
+const boundIncrement = domain.getAction(increment);
+
+boundIncrement(5); // 5
+boundIncrement(3); // 8
+```
+
+An action context has `get`, `set`, and `reset`. It cannot track dependencies
+or register cleanups, because it is not reactive.
+
+### Factories
+
+Use a factory when you need one atom or computed per key, such as one entry per
+record id. Instances are cached in an LRU map, so the same key returns the same
+instance.
+
+```js
+import { atomFactory, computedFactory } from 'atemno/core';
+
+const todo = atomFactory('todo', {
+  key: id => `${id}`,
+  value: id => ({ id, done: false }),
+  // Maximum number of cached instances. Defaults to 100.
+  limit: 50,
+});
+
+todo(1) === todo(1); // true
+todo(1).name; // "todo/1"
+
+const todoLabel = computedFactory('todoLabel', {
+  key: id => `${id}`,
+  computed: id => $ => ($.get(todo(id)).done ? 'done' : 'pending'),
+});
+```
+
+Names are namespaced as `<factory name>/<key>`, so they stay unique. Once the
+cache is full, the least recently used instance is dropped. Asking for that key
+again builds a new instance with fresh initial state.
+
+### Node lifecycle
+
+A domain creates a node the first time it sees an atom or computed. It releases
+that node once nothing tracks it any more, which happens when the last observer
+that depended on it goes away.
+
+```js
+const hits = atom('hits', 0);
+
+const stop = domain.observe(hits, log);
+domain.set(hits, 9);
+
+stop();
+
+domain.get(hits); // 0, the node was released and rebuilt from the initial value
+```
+
+A node that nothing ever tracked is never released on its own. Reading and
+writing an atom without observing it keeps its value for the life of the
+domain.
+
+Release nodes yourself with `domain.destroyAtom` and `domain.destroyComputed`.
+Tear down the whole domain with `domain.destroy`. After that, reads and new
+subscriptions throw, and writes are ignored.
+
+Pass `onCreate`, `onUpdate`, and `onDestroy` to the domain to watch this happen.
+
+```js
+const domain = new ReactiveDomain({
+  onCreate: source => console.log('create', source.name),
+  onUpdate: source => console.log('update', source.name),
+  onDestroy: source => console.log('destroy', source.name),
+});
+```
+
+## TypeScript
+
+`atom` infers its type from the initial value. `computed` cannot infer, because
+the type parameter appears in both the callback's argument and its return type.
+Pass it explicitly.
+
+```ts
+const count = atom('count', 0); // Atom<number>
+
+const double = computed<number>('double', $ => $.get(count) * 2);
+```
+
+Without the type argument the computed resolves to `Computed<unknown>`, and
+every read of it is `unknown`.
+
+## API
+
+| Export                               | Description                                       |
+| ------------------------------------ | ------------------------------------------------- |
+| `atom(name, initialValue, isEqual?)` | Describes a writable value.                       |
+| `computed(name, compute, isEqual?)`  | Describes a value derived from other sources.     |
+| `action(callback)`                   | Describes a set of reads and writes.              |
+| `atomFactory(name, options)`         | Builds a cached atom per key.                     |
+| `computedFactory(name, options)`     | Builds a cached computed per key.                 |
+| `ReactiveDomain(options)`            | Holds the state for a set of atoms and computeds. |
+
+`ReactiveDomain` methods:
+
+| Method                      | Description                                                      |
+| --------------------------- | ---------------------------------------------------------------- |
+| `get(source)`               | Reads an atom or computed, initializing it if needed.            |
+| `set(source, value)`        | Writes an atom. Ignored if the value is equal.                   |
+| `reset(source)`             | Restores an atom's initial value, or forces a computed to rerun. |
+| `observe(source, callback)` | Subscribes to changes. Returns a cleanup function.               |
+| `getAction(action)`         | Binds an action to this domain.                                  |
+| `destroyAtom(source)`       | Releases one atom's node.                                        |
+| `destroyComputed(source)`   | Releases one computed's node.                                    |
+| `destroy()`                 | Tears down the domain.                                           |
 
 ## Sponsors
 
