@@ -539,6 +539,17 @@ function Inspector() {
 }
 ```
 
+### Example
+
+A Vite app covering all of the above lives in `examples/react`. Build the
+library first, because the example resolves the published entry points.
+
+```bash
+pnpm install
+pnpm run build
+pnpm --filter atemno-example-react run dev
+```
+
 ### React API
 
 | Export                     | Description                                            |

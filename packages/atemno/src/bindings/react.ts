@@ -186,25 +186,36 @@ export function AtemnoGraph(): ReactNode {
   );
 }
 
-function Atom(_props: AtemnoNodeSnapshot): ReactNode {
+// These draw nothing. They exist so each node shows up as its own element in
+// the React developer tools, labelled by kind, with the node's name and value
+// on its props.
+//
+// The identifiers are suffixed because the plain names would shadow the `Atom`,
+// `LazyAtom` and `Computed` types in the generated declarations, which silently
+// breaks the public signatures that reference them. The developer tools read
+// `displayName`, so the labels stay clean.
+function AtomNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
   return null;
 }
+AtomNodeElement.displayName = 'Atom';
 
-function LazyAtom(_props: AtemnoNodeSnapshot): ReactNode {
+function LazyAtomNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
   return null;
 }
+LazyAtomNodeElement.displayName = 'LazyAtom';
 
-function Computed(_props: AtemnoNodeSnapshot): ReactNode {
+function ComputedNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
   return null;
 }
+ComputedNodeElement.displayName = 'Computed';
 
 const NODE_COMPONENTS: Record<
   AtemnoNodeKind,
   (props: AtemnoNodeSnapshot) => ReactNode
 > = {
-  atom: Atom,
-  lazyAtom: LazyAtom,
-  computed: Computed,
+  atom: AtomNodeElement,
+  lazyAtom: LazyAtomNodeElement,
+  computed: ComputedNodeElement,
 };
 
 // ---------------------------------------------------------------------------
