@@ -4,7 +4,12 @@
   "private": false,
   "description": "Fine-grained local-global state management library",
   "keywords": [
-    "pridepack"
+    "atoms",
+    "computed",
+    "fine-grained",
+    "reactivity",
+    "signals",
+    "state-management"
   ],
   "homepage": "https://github.com/lxsmnsyc/atemno",
   "bugs": {
@@ -41,13 +46,26 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "@vitest/coverage-v8": "^4.1.11",
+    "happy-dom": "^20.13.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tsdown": "^0.21.7",
     "tslib": "^2.8.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "engines": {
-    "node": ">=10"
+    "node": ">=20"
   }
 }

@@ -27,6 +27,7 @@ pnpm add atemno
 - Computeds are lazy. They recompute on read, not on write.
 - Nodes are reference counted. A node is released once nothing tracks it any more.
 - No global state, so tests and server rendering get an isolated domain each.
+- A React binding that renders the graph into React DevTools when you want it.
 
 ## Quick start
 
@@ -387,6 +388,172 @@ every read of it is `unknown`.
 | `destroyLazyAtom(source)`   | Releases one lazy atom's node.                                   |
 | `destroyComputed(source)`   | Releases one computed's node.                                    |
 | `destroy()`                 | Tears down the domain.                                           |
+
+## React
+
+`atemno/react` needs React 18 or newer, for `useSyncExternalStore`.
+
+### Setting up a domain
+
+`AtemnoDomain` builds a domain and supplies it to the tree. It takes the same
+options as the `ReactiveDomain` constructor.
+
+```jsx
+import { AtemnoDomain } from 'atemno/react';
+
+function App() {
+  return (
+    <AtemnoDomain onError={error => console.error(error)}>
+      <Counter />
+    </AtemnoDomain>
+  );
+}
+```
+
+The domain is built once and kept for the life of the component, so inline
+handlers are fine. The latest ones are always the ones called.
+
+It is not destroyed on unmount. Unmounting releases every subscription the tree
+held, the domain releases its nodes in turn, and the domain becomes garbage.
+
+To supply a domain you built yourself, use `AtemnoProvider` instead. Both
+components nest, and hooks use the nearest one, so a subtree can run against its
+own isolated state.
+
+```jsx
+import { AtemnoProvider } from 'atemno/react';
+
+const domain = new ReactiveDomain({});
+
+<AtemnoProvider domain={domain}>
+  <App />
+</AtemnoProvider>;
+```
+
+### Reading and writing
+
+```jsx
+import { useAtomState, useAtomValue, useComputedValue } from 'atemno/react';
+
+const count = atom('count', 0);
+const double = computed('double', $ => $.get(count) * 2);
+
+function Counter() {
+  const [value, setValue] = useAtomState(count);
+  const doubled = useComputedValue(double);
+
+  return (
+    <button type="button" onClick={() => setValue(v => v + 1)}>
+      {value} doubled is {doubled}
+    </button>
+  );
+}
+```
+
+`useAtomValue` reads an atom or a lazy atom. `useComputedValue` reads a computed
+and evaluates it if nothing has yet. Both rerender on change, including changes
+made outside React.
+
+`useSetAtom` returns only a setter. A component that writes but never reads does
+not subscribe, so it does not rerender when the atom changes.
+
+```jsx
+function Reset() {
+  const setCount = useSetAtom(count);
+  return (
+    <button type="button" onClick={() => setCount(0)}>
+      reset
+    </button>
+  );
+}
+```
+
+Setters take a value or a function of the current value, like `useState`. An
+atom whose type is itself a function has to be written with a function
+returning it.
+
+`useResetSource` restores any source to its initial state. `useAction` binds an
+action to the nearest domain.
+
+```jsx
+const bump = action(($, by) => {
+  $.set(count, $.get(count) + by);
+});
+
+function Bump() {
+  const run = useAction(bump);
+  return (
+    <button type="button" onClick={() => run(5)}>
+      +5
+    </button>
+  );
+}
+```
+
+### Node lifetime
+
+A domain releases a node once nothing tracks it, and each reading component is
+the only tracker it has. Unmounting the last reader of a source therefore
+discards its state, and the next read starts from the initial value. State
+survives for as long as at least one reader stays mounted.
+
+Keep a source alive across unmounts by reading it somewhere that outlives the
+components that come and go, or by holding a subscription yourself.
+
+```js
+const stop = domain.observe(count, () => {});
+```
+
+### Seeing the graph in React DevTools
+
+Set `devtools` on `AtemnoDomain` to render one element per live node. The
+elements draw nothing. They exist so the reactive state shows up as `Atom`,
+`LazyAtom` and `Computed` entries in the React developer tools, with each node's
+name and value on its props.
+
+```jsx
+<AtemnoDomain devtools={import.meta.env.DEV}>
+  <App />
+</AtemnoDomain>
+```
+
+It is off by default, because it rerenders on every write. Reading the graph
+happens outside the render phase, so it never revives a released node, though a
+stale computed does recompute a little earlier than it otherwise would. A
+computed that throws is reported rather than rethrown.
+
+`useAtemnoGraph` returns the same snapshot as a plain array, for building an
+inspector of your own.
+
+```jsx
+function Inspector() {
+  return (
+    <ul>
+      {useAtemnoGraph().map(node => (
+        <li key={node.name}>
+          {node.kind} {node.name}: {node.failed ? 'error' : String(node.value)}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### React API
+
+| Export                     | Description                                            |
+| -------------------------- | ------------------------------------------------------ |
+| `AtemnoDomain`             | Builds a domain, supplies it, and tracks its graph.    |
+| `AtemnoProvider`           | Supplies a domain you built yourself.                  |
+| `AtemnoGraph`              | Renders the graph as elements for the developer tools. |
+| `useAtemnoDomain()`        | Returns the nearest domain.                            |
+| `useAtomValue(source)`     | Reads an atom or lazy atom.                            |
+| `useComputedValue(source)` | Reads a computed.                                      |
+| `useSetAtom(source)`       | Returns a setter, without subscribing.                 |
+| `useAtomState(source)`     | Returns `[value, setter]`.                             |
+| `useResetSource(source)`   | Returns a callback that resets the source.             |
+| `useAction(action)`        | Binds an action to the nearest domain.                 |
+| `useAtemnoGraph()`         | Returns every live node with its state.                |
 
 ## Sponsors
 

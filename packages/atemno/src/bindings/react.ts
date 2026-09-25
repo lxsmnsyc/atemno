@@ -1,0 +1,408 @@
+import type { ReactNode } from 'react';
+import {
+  createContext,
+  createElement,
+  Fragment,
+  useCallback,
+  useContext,
+  useDebugValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import type {
+  Action,
+  Cleanup,
+  Computed,
+  NormalAction,
+  ReactiveDomainOptions,
+  ReadableSource,
+  WritableSource,
+} from '../index';
+import { ReactiveDomain } from '../index';
+import { NodeType } from '../types';
+
+// ---------------------------------------------------------------------------
+// Graph inspection
+// ---------------------------------------------------------------------------
+
+export type AtemnoNodeKind = 'atom' | 'lazyAtom' | 'computed';
+
+export interface AtemnoNodeSnapshot {
+  name: string;
+  kind: AtemnoNodeKind;
+  /**
+   * The node's current state. Absent when reading it threw.
+   */
+  value?: unknown;
+  /**
+   * What reading the node threw, for a computed that failed.
+   */
+  error?: unknown;
+  failed: boolean;
+}
+
+interface GraphSnapshot {
+  version: number;
+  nodes: AtemnoNodeSnapshot[];
+}
+
+const EMPTY_SNAPSHOT: GraphSnapshot = { version: 0, nodes: [] };
+
+interface GraphRegistry {
+  subscribe: (listener: () => void) => Cleanup;
+  getSnapshot: () => GraphSnapshot;
+  add: (source: ReadableSource<any>) => void;
+  touch: () => void;
+  remove: (source: ReadableSource<any>) => void;
+  attach: (domain: ReactiveDomain) => void;
+}
+
+function kindOf(source: ReadableSource<any>): AtemnoNodeKind {
+  switch (source.type) {
+    case NodeType.Atom:
+      return 'atom';
+    case NodeType.Computed:
+      return 'computed';
+    default:
+      return 'lazyAtom';
+  }
+}
+
+/**
+ * Tracks which nodes a domain currently holds, so they can be rendered for the
+ * React developer tools.
+ *
+ * Lifecycle events arrive in the middle of reactive work, which can happen
+ * during a render. Notifications are therefore deferred to a microtask, keeping
+ * the update out of the render phase.
+ */
+function createGraphRegistry(): GraphRegistry {
+  const sources = new Map<string, ReadableSource<any>>();
+  const listeners = new Set<() => void>();
+  let domain: ReactiveDomain | undefined;
+  let snapshot = EMPTY_SNAPSHOT;
+  let scheduled = false;
+
+  function read(source: ReadableSource<any>): AtemnoNodeSnapshot {
+    const base = { name: source.name, kind: kindOf(source) };
+    if (!domain) {
+      return { ...base, failed: false };
+    }
+    try {
+      // Only nodes the domain still holds are read, so this never revives a
+      // released one. A stale computed does recompute here, earlier than it
+      // otherwise would have.
+      return { ...base, value: domain.get(source), failed: false };
+    } catch (error) {
+      return { ...base, error, failed: true };
+    }
+  }
+
+  function flush(): void {
+    scheduled = false;
+    snapshot = {
+      version: snapshot.version + 1,
+      nodes: [...sources.values()].map(read),
+    };
+    for (const listener of [...listeners]) {
+      listener();
+    }
+  }
+
+  function schedule(): void {
+    if (!scheduled) {
+      scheduled = true;
+      queueMicrotask(flush);
+    }
+  }
+
+  return {
+    attach(next) {
+      domain = next;
+    },
+    add(source) {
+      sources.set(source.name, source);
+      schedule();
+    },
+    touch: schedule,
+    remove(source) {
+      sources.delete(source.name);
+      schedule();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot() {
+      return snapshot;
+    },
+  };
+}
+
+const GraphContext = createContext<GraphRegistry | undefined>(undefined);
+
+/**
+ * Returns every node the domain currently holds, with its state.
+ *
+ * Rerenders when the graph changes. Use it to build an inspector of your own.
+ * The list is a snapshot taken outside the render phase, so reading it has no
+ * effect on the graph.
+ *
+ * Must sit under an `AtemnoDomain`, which is what tracks the graph.
+ */
+export function useAtemnoGraph(): AtemnoNodeSnapshot[] {
+  const registry = useContext(GraphContext);
+  if (!registry) {
+    throw new Error('useAtemnoGraph requires an AtemnoDomain above it.');
+  }
+
+  return useSyncExternalStore(
+    registry.subscribe,
+    registry.getSnapshot,
+    registry.getSnapshot,
+  ).nodes;
+}
+
+/**
+ * Renders one element per node the domain holds, so the reactive state shows up
+ * in the React developer tools. Renders nothing itself.
+ *
+ * Must sit under an `AtemnoDomain`, which is what tracks the graph.
+ */
+export function AtemnoGraph(): ReactNode {
+  const nodes = useAtemnoGraph();
+
+  return createElement(
+    Fragment,
+    null,
+    nodes.map(node =>
+      createElement(NODE_COMPONENTS[node.kind], { key: node.name, ...node }),
+    ),
+  );
+}
+
+function Atom(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+
+function LazyAtom(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+
+function Computed(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+
+const NODE_COMPONENTS: Record<
+  AtemnoNodeKind,
+  (props: AtemnoNodeSnapshot) => ReactNode
+> = {
+  atom: Atom,
+  lazyAtom: LazyAtom,
+  computed: Computed,
+};
+
+// ---------------------------------------------------------------------------
+// Domain
+// ---------------------------------------------------------------------------
+
+const DomainContext = createContext<ReactiveDomain | undefined>(undefined);
+
+export interface AtemnoProviderProps {
+  /**
+   * The domain that holds the state for this part of the tree.
+   */
+  domain: ReactiveDomain;
+  children?: ReactNode;
+}
+
+/**
+ * Supplies a domain to the hooks below it.
+ *
+ * Use this directly to bring a domain you built yourself. Nesting is allowed,
+ * and hooks use the nearest provider, which lets a subtree run against its own
+ * isolated state.
+ */
+export function AtemnoProvider(props: AtemnoProviderProps): ReactNode {
+  return createElement(
+    DomainContext.Provider,
+    { value: props.domain },
+    props.children,
+  );
+}
+
+export interface AtemnoDomainProps extends ReactiveDomainOptions {
+  /**
+   * Renders the domain's graph as elements, for the React developer tools.
+   * Off by default, because it re-renders on every write.
+   */
+  devtools?: boolean;
+  children?: ReactNode;
+}
+
+/**
+ * Creates a domain, supplies it to the tree, and tracks its graph.
+ *
+ * The domain is built once and kept for the life of the component. The option
+ * handlers may change freely between renders; the latest ones are always the
+ * ones called.
+ *
+ * The domain is deliberately not destroyed on unmount. Unmounting releases
+ * every subscription the tree held, which lets the domain's own cleanup release
+ * the nodes, and the domain itself becomes garbage. Calling `destroy` here
+ * would break `StrictMode`, whose remount reuses this component's state and
+ * would find a dead domain.
+ */
+export function AtemnoDomain(props: AtemnoDomainProps): ReactNode {
+  const options = useRef(props);
+  useEffect(() => {
+    options.current = props;
+  });
+
+  const [handle] = useState(() => {
+    const registry = createGraphRegistry();
+    const domain = new ReactiveDomain({
+      onError(reason) {
+        const handler = options.current.onError;
+        if (handler) {
+          handler(reason);
+        } else {
+          throw reason;
+        }
+      },
+      onCreate(source) {
+        registry.add(source);
+        options.current.onCreate?.(source);
+      },
+      onUpdate(source) {
+        registry.touch();
+        options.current.onUpdate?.(source);
+      },
+      onDestroy(source) {
+        registry.remove(source);
+        options.current.onDestroy?.(source);
+      },
+    });
+    registry.attach(domain);
+    return { domain, registry };
+  });
+
+  return createElement(
+    GraphContext.Provider,
+    { value: handle.registry },
+    props.devtools ? createElement(AtemnoGraph, null) : null,
+    createElement(AtemnoProvider, { domain: handle.domain }, props.children),
+  );
+}
+
+/**
+ * Returns the nearest domain.
+ *
+ * @throws if there is no provider above the caller.
+ */
+export function useAtemnoDomain(): ReactiveDomain {
+  const domain = useContext(DomainContext);
+  if (!domain) {
+    throw new Error(
+      'useAtemnoDomain requires an AtemnoDomain or AtemnoProvider above it.',
+    );
+  }
+  return domain;
+}
+
+// ---------------------------------------------------------------------------
+// Reading and writing
+// ---------------------------------------------------------------------------
+
+function useSourceValue<T>(source: ReadableSource<T>): T {
+  const domain = useAtemnoDomain();
+
+  const subscribe = useCallback(
+    (onChange: () => void) => domain.observe(source, onChange),
+    [domain, source],
+  );
+  const read = useCallback(() => domain.get(source), [domain, source]);
+
+  // The third argument covers server rendering, where there is nothing to
+  // subscribe to.
+  const value = useSyncExternalStore(subscribe, read, read);
+  useDebugValue(value);
+  return value;
+}
+
+export type AtomUpdate<T> = T | ((previous: T) => T);
+export type AtomSetter<T> = (update: AtomUpdate<T>) => void;
+
+function isUpdater<T>(update: AtomUpdate<T>): update is (previous: T) => T {
+  return typeof update === 'function';
+}
+
+/**
+ * Reads an atom or lazy atom and rerenders when it changes.
+ */
+export function useAtomValue<T>(source: WritableSource<T>): T {
+  return useSourceValue(source);
+}
+
+/**
+ * Reads a computed and rerenders when it changes. Evaluates the computed if
+ * nothing has yet.
+ */
+export function useComputedValue<T>(source: Computed<T>): T {
+  return useSourceValue(source);
+}
+
+/**
+ * Returns a setter for an atom. The caller does not subscribe, so writing from
+ * a component that never reads the atom causes no rerender.
+ *
+ * The setter takes a value or a function of the current value. An atom whose
+ * type is itself a function has to be written with a function returning it.
+ */
+export function useSetAtom<T>(source: WritableSource<T>): AtomSetter<T> {
+  const domain = useAtemnoDomain();
+
+  return useCallback(
+    (update: AtomUpdate<T>) => {
+      domain.set(
+        source,
+        isUpdater(update) ? update(domain.get(source)) : update,
+      );
+    },
+    [domain, source],
+  );
+}
+
+/**
+ * Reads an atom and returns a setter for it, in the shape of `useState`.
+ */
+export function useAtomState<T>(source: WritableSource<T>): [T, AtomSetter<T>] {
+  return [useAtomValue(source), useSetAtom(source)];
+}
+
+/**
+ * Returns a callback that restores a source to its initial state. Resetting a
+ * computed forces it to run again.
+ */
+export function useResetSource<T>(source: ReadableSource<T>): () => void {
+  const domain = useAtemnoDomain();
+
+  return useCallback(() => {
+    domain.reset(source);
+  }, [domain, source]);
+}
+
+/**
+ * Binds an action to the nearest domain. The returned callback is stable for as
+ * long as the domain and the action are.
+ */
+export function useAction<T, R>(action: Action<T, R>): NormalAction<T, R> {
+  const domain = useAtemnoDomain();
+
+  return useMemo(() => domain.getAction(action), [domain, action]);
+}
