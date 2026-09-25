@@ -19,6 +19,9 @@ describe('README examples', () => {
     domain.set(greeting, 'Bonjour');
 
     expect(logged).toEqual(['Bonjour, World!']);
+
+    const value = domain.get(message);
+    expect(value).toBe('Bonjour, World!');
   });
 
   it('domains never share state', () => {
@@ -66,16 +69,23 @@ describe('README examples', () => {
     expect(logged).toEqual(['whut?']);
   });
 
-  it('observing an already-read computed does not fire on subscribe', () => {
+  it('subscribing never fires the callback', () => {
     const domain = new ReactiveDomain({});
     const count = atom('count', 1);
     const double = computed<number>('double', $ => $.get(count) * 2);
-    const seen: number[] = [];
+    const fromRead: number[] = [];
+    const fromCold: number[] = [];
 
+    // Already evaluated.
     domain.get(double);
-    domain.observe(double, value => seen.push(value));
+    domain.observe(double, value => fromRead.push(value));
 
-    expect(seen).toEqual([]);
+    // Never evaluated.
+    const cold = new ReactiveDomain({});
+    cold.observe(double, value => fromCold.push(value));
+
+    expect(fromRead).toEqual([]);
+    expect(fromCold).toEqual([]);
   });
 
   it('lazy computeds', () => {

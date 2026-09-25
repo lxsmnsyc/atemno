@@ -2,7 +2,7 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: {
-    core: 'src/index.ts',
+    index: 'src/index.ts',
     react: 'src/bindings/react.ts',
   },
   platform: 'neutral',

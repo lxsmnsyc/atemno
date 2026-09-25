@@ -130,9 +130,14 @@ export class ReactiveDomain {
     for (const [, node] of this.atoms) {
       destroyAtomNode(node);
     }
+    // Destroy all lazy atoms
+    for (const [, node] of this.lazyAtoms) {
+      destroyAtomNode(node);
+    }
 
     this.computeds.clear();
     this.atoms.clear();
+    this.lazyAtoms.clear();
 
     this.alive = false;
   }
@@ -232,7 +237,7 @@ export class ReactiveDomain {
   destroyLazyAtom<T>(source: LazyAtom<T>): void {
     const instance = this.getLazyAtom(source);
     destroyAtomNode(instance);
-    this.atoms.delete(source.name);
+    this.lazyAtoms.delete(source.name);
     this.onDestroy(source);
   }
 
@@ -281,10 +286,7 @@ export class ReactiveDomain {
     destroyObserverNode(this, instance);
   }
 
-  observe<T>(
-    source: Atom<T> | Computed<T>,
-    callback: (value: T) => void,
-  ): Cleanup {
+  observe<T>(source: ReadableSource<T>, callback: (value: T) => void): Cleanup {
     this.assertAlive();
     // Create an observer node
     const observer = new ObserverNode(source, callback);
@@ -292,13 +294,15 @@ export class ReactiveDomain {
     // Track the source
     if (source.type === NodeType.Atom) {
       trackNode(observer.tracker, this.getAtom(source));
+    } else if (source.type === NodeType.LazyAtom) {
+      trackNode(observer.tracker, this.getLazyAtom(source));
     } else if (source.type === NodeType.Computed) {
       const instance = this.getComputed(source);
-      trackNode(observer.tracker, instance);
-      // Ensure that the computed has been initialized
-      // so that the observer is recognized before
-      // tracking
+      // Initialize the computed before tracking it. The first evaluation
+      // notifies its trackers, and this observer must not be one of them yet,
+      // otherwise subscribing fires the callback.
       revalidateComputed(this, instance);
+      trackNode(observer.tracker, instance);
     }
 
     // Add to active observers
@@ -471,7 +475,7 @@ class ObserverNode<T> {
   tracker = new Tracker(this);
 
   constructor(
-    public source: Atom<T> | Computed<T>,
+    public source: ReadableSource<T>,
     public compute: (value: T) => void,
     public options?: BaseOptions,
   ) {}

@@ -1,4 +1,4 @@
-import { atom, computed, ReactiveDomain } from 'atemno/core';
+import { atom, computed, ReactiveDomain } from 'atemno';
 
 console.log(new Date().toString());
 

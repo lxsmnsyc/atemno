@@ -202,7 +202,6 @@ describe('computed', () => {
     );
     const observer = vi.fn();
     domain.observe(parity, observer);
-    observer.mockClear();
 
     domain.set(count, 2);
     expect(observer).not.toHaveBeenCalled();

@@ -40,7 +40,7 @@ describe('observe', () => {
     expect(seen).toEqual([1]);
   });
 
-  it('fires on subscription to an uninitialized computed', () => {
+  it('does not fire on subscription to an uninitialized computed', () => {
     const domain = createDomain();
     const count = atom('count', 2);
     const double = computed<number>('double', $ => $.get(count) * 2);
@@ -48,7 +48,33 @@ describe('observe', () => {
 
     domain.observe(double, value => seen.push(value));
 
-    expect(seen).toEqual([4]);
+    expect(seen).toEqual([]);
+  });
+
+  it('does not fire on subscription to an already-read computed', () => {
+    const domain = createDomain();
+    const count = atom('count', 2);
+    const double = computed<number>('double', $ => $.get(count) * 2);
+    const seen: number[] = [];
+
+    domain.get(double);
+    domain.observe(double, value => seen.push(value));
+
+    expect(seen).toEqual([]);
+  });
+
+  it('evaluates the computed on subscription so later changes are detected', () => {
+    const domain = createDomain();
+    const count = atom('count', 2);
+    let runs = 0;
+    const double = computed<number>('double', $ => {
+      runs++;
+      return $.get(count) * 2;
+    });
+
+    domain.observe(double, () => {});
+
+    expect(runs).toBe(1);
   });
 
   it('fires when a computed dependency changes', () => {
@@ -61,7 +87,7 @@ describe('observe', () => {
     domain.set(count, 1);
     domain.set(count, 2);
 
-    expect(seen).toEqual([0, 2, 4]);
+    expect(seen).toEqual([2, 4]);
   });
 
   it('does not fire when a computed produces an equal value', () => {
@@ -74,7 +100,10 @@ describe('observe', () => {
     domain.set(count, 2);
     domain.set(count, 4);
 
-    expect(seen).toEqual([true]);
+    expect(seen).toEqual([]);
+
+    domain.set(count, 3);
+    expect(seen).toEqual([false]);
   });
 
   it('propagates through a chain of computeds', () => {
@@ -87,7 +116,7 @@ describe('observe', () => {
     domain.observe(quadruple, value => seen.push(value));
     domain.set(count, 3);
 
-    expect(seen).toEqual([4, 12]);
+    expect(seen).toEqual([12]);
   });
 
   it('notifies every observer of the same atom', () => {

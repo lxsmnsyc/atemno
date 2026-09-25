@@ -21,6 +21,7 @@ pnpm add atemno
 ## Features
 
 - Atoms and computeds are plain descriptions of state. They hold no value on their own.
+- Atoms can defer their initial value to first read, for state that only exists on the client.
 - A `ReactiveDomain` owns the actual values. The same atom can hold different state in different domains.
 - Computeds track their dependencies automatically, including dependencies that change between runs.
 - Computeds are lazy. They recompute on read, not on write.
@@ -30,7 +31,7 @@ pnpm add atemno
 ## Quick start
 
 ```js
-import { atom, computed, ReactiveDomain } from 'atemno/core';
+import { atom, computed, ReactiveDomain } from 'atemno';
 
 const greeting = atom('greeting', 'Hello');
 const receiver = atom('receiver', 'World');
@@ -63,7 +64,7 @@ An atom is the simplest unit of state. It holds one value, can be written to,
 and can be observed.
 
 ```js
-import { atom } from 'atemno/core';
+import { atom } from 'atemno';
 
 const message = atom(
   // A unique identifier for this atom
@@ -76,13 +77,29 @@ const message = atom(
 Creating an atom does not create any state. It only describes state. The name
 must be unique, because a domain looks nodes up by name.
 
+### Lazy atoms
+
+`atom` evaluates its initial value immediately. Use `lazyAtom` when that is not
+safe or not cheap, such as reading from `localStorage` in code that also runs on
+a server.
+
+```js
+import { lazyAtom } from 'atemno';
+
+const theme = lazyAtom('theme', () => localStorage.getItem('theme'));
+```
+
+The function runs the first time a domain reads the atom, and once per domain.
+`reset` runs it again. Lazy atoms behave like atoms otherwise. They can be
+written to and observed.
+
 ### `ReactiveDomain`
 
 A `ReactiveDomain` is what gives atoms life. It holds the values, runs the
 computeds, and notifies the observers.
 
 ```js
-import { ReactiveDomain } from 'atemno/core';
+import { ReactiveDomain } from 'atemno';
 
 const domain = new ReactiveDomain({
   onError(error) {
@@ -140,11 +157,13 @@ stop();
 
 `observe` returns a cleanup function. Call it to stop listening.
 
-Observing an atom does not call the callback right away. Observing a computed
-calls it right away only when the subscription triggers that computed's first
-evaluation. If something already read the computed in this domain, the callback
-does not run until the next change. Read the value with `domain.get` first if
-you need it up front.
+Subscribing never calls the callback. It only runs on later changes. Read the
+current value with `domain.get` if you need it up front.
+
+```js
+const value = domain.get(message);
+const stop = domain.observe(message, onChange);
+```
 
 ### Computeds
 
@@ -153,7 +172,7 @@ tracker context, and every source read through that context becomes a
 dependency.
 
 ```js
-import { computed } from 'atemno/core';
+import { computed } from 'atemno';
 
 const count = atom('count', 1);
 const double = computed('double', $ => $.get(count) * 2);
@@ -248,7 +267,7 @@ An action groups reads and writes behind one function. It is a description
 until a domain binds it, the same way an atom is.
 
 ```js
-import { action } from 'atemno/core';
+import { action } from 'atemno';
 
 const increment = action(($, amount) => {
   $.set(count, $.get(count) + amount);
@@ -271,7 +290,7 @@ record id. Instances are cached in an LRU map, so the same key returns the same
 instance.
 
 ```js
-import { atomFactory, computedFactory } from 'atemno/core';
+import { atomFactory, computedFactory } from 'atemno';
 
 const todo = atomFactory('todo', {
   key: id => `${id}`,
@@ -345,25 +364,27 @@ every read of it is `unknown`.
 
 ## API
 
-| Export                               | Description                                       |
-| ------------------------------------ | ------------------------------------------------- |
-| `atom(name, initialValue, isEqual?)` | Describes a writable value.                       |
-| `computed(name, compute, isEqual?)`  | Describes a value derived from other sources.     |
-| `action(callback)`                   | Describes a set of reads and writes.              |
-| `atomFactory(name, options)`         | Builds a cached atom per key.                     |
-| `computedFactory(name, options)`     | Builds a cached computed per key.                 |
-| `ReactiveDomain(options)`            | Holds the state for a set of atoms and computeds. |
+| Export                                      | Description                                       |
+| ------------------------------------------- | ------------------------------------------------- |
+| `atom(name, initialValue, isEqual?)`        | Describes a writable value.                       |
+| `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first read.   |
+| `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.     |
+| `action(callback)`                          | Describes a set of reads and writes.              |
+| `atomFactory(name, options)`                | Builds a cached atom per key.                     |
+| `computedFactory(name, options)`            | Builds a cached computed per key.                 |
+| `ReactiveDomain(options)`                   | Holds the state for a set of atoms and computeds. |
 
 `ReactiveDomain` methods:
 
 | Method                      | Description                                                      |
 | --------------------------- | ---------------------------------------------------------------- |
-| `get(source)`               | Reads an atom or computed, initializing it if needed.            |
-| `set(source, value)`        | Writes an atom. Ignored if the value is equal.                   |
+| `get(source)`               | Reads any source, initializing it if needed.                     |
+| `set(source, value)`        | Writes an atom or lazy atom. Ignored if the value is equal.      |
 | `reset(source)`             | Restores an atom's initial value, or forces a computed to rerun. |
 | `observe(source, callback)` | Subscribes to changes. Returns a cleanup function.               |
 | `getAction(action)`         | Binds an action to this domain.                                  |
 | `destroyAtom(source)`       | Releases one atom's node.                                        |
+| `destroyLazyAtom(source)`   | Releases one lazy atom's node.                                   |
 | `destroyComputed(source)`   | Releases one computed's node.                                    |
 | `destroy()`                 | Tears down the domain.                                           |
 
