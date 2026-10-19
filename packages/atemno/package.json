@@ -1,6 +1,6 @@
 {
   "name": "atemno",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Fine-grained local-global state management library",
   "keywords": [
