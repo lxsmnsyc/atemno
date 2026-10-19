@@ -10,6 +10,15 @@ description: Every export of atemno and atemno/react.
 | `atom(name, initialValue, isEqual?)`        | Describes a writable value.                    |
 | `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first use. |
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.  |
+| `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written. |
+| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.   |
+| `ResourceNotReadyError`                     | Thrown when reading a pending resource.        |
+| `toResult(read)`                            | Describes a read without throwing.             |
+| `isPending(read)`                           | Tells whether a read is pending.               |
+| `waitForNone(reads)`                        | One result per read.                           |
+| `waitForAll(reads)`                         | Every value, once all resolved.                |
+| `waitForAny(reads)`                         | The first value that resolved.                 |
+| `waitForRace(reads)`                        | The first read to settle.                      |
 | `action(callback)`                          | Describes a set of reads and writes.           |
 | `atomFactory(name, options)`                | Builds a cached atom per key.                  |
 | `computedFactory(name, options)`            | Builds a cached computed per key.              |
@@ -17,17 +26,18 @@ description: Every export of atemno and atemno/react.
 
 ## ReactiveDomain
 
-| Method                      | Description                                       |
-| --------------------------- | ------------------------------------------------- |
-| `get(source)`               | Reads any source, creating its node if needed.    |
-| `set(source, value)`        | Writes an atom. Ignored if the value is equal.    |
-| `reset(source)`             | Restores an initial value, or reruns a computed.  |
-| `observe(source, callback)` | Subscribes. Returns a function that unsubscribes. |
-| `getAction(action)`         | Binds an action to this domain.                   |
-| `destroyAtom(source)`       | Releases one atom's node.                         |
-| `destroyLazyAtom(source)`   | Releases one lazy atom's node.                    |
-| `destroyComputed(source)`   | Releases one computed's node.                     |
-| `destroy()`                 | Tears down the domain.                            |
+| Method                      | Description                                        |
+| --------------------------- | -------------------------------------------------- |
+| `get(source)`               | Reads any source, creating its node if needed.     |
+| `set(source, value)`        | Writes an atom, or passes a value to a proxy.      |
+| `reset(source)`             | Restores an initial value, or reruns a computed.   |
+| `observe(source, callback)` | Subscribes. Returns a function that unsubscribes.  |
+| `observeWeak(source, cb)`   | Subscribes without keeping the source alive.       |
+| `getAction(action)`         | Binds an action to this domain.                    |
+| `destroyAtom(source)`       | Releases one atom's node.                          |
+| `destroyLazyAtom(source)`   | Releases one lazy atom's node.                     |
+| `destroyComputed(source)`   | Releases a computed's, proxy's or resource's node. |
+| `destroy()`                 | Tears down the domain.                             |
 
 ## atemno/react
 
@@ -37,8 +47,8 @@ description: Every export of atemno and atemno/react.
 | `AtemnoProvider`           | Supplies a domain you built yourself.               |
 | `AtemnoGraph`              | Renders the graph as elements for React DevTools.   |
 | `useAtemnoDomain()`        | Returns the nearest domain.                         |
-| `useAtomValue(source)`     | Reads an atom or lazy atom.                         |
-| `useComputedValue(source)` | Reads a computed.                                   |
+| `useAtomValue(source)`     | Reads an atom, lazy atom or proxy atom.             |
+| `useComputedValue(source)` | Reads a computed, proxy or resource. Suspends.      |
 | `useSetAtom(source)`       | Returns a setter, without subscribing.              |
 | `useAtomState(source)`     | Returns a value and a setter.                       |
 | `useResetSource(source)`   | Returns a callback that resets the source.          |

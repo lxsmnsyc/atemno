@@ -11,7 +11,7 @@ description: Set devtools on AtemnoDomain and every live node shows up in React 
 </AtemnoDomain>
 ```
 
-`AtemnoDomain` then renders one element per live node. The elements draw nothing. They exist so the state shows up in React DevTools as `Atom`, `LazyAtom` and `Computed` entries, with each node's name and value on its props.
+`AtemnoDomain` then renders one element per live node. The elements draw nothing. They exist so the state shows up in React DevTools as `Atom`, `LazyAtom`, `Computed`, `ProxyAtom` and `Resource` entries, with each node's name and value on its props.
 
 It is off by default, because it rerenders on every write.
 
@@ -23,6 +23,7 @@ The graph comes from the domain's `onCreate`, `onUpdate` and `onDestroy` hooks. 
 - It only reads nodes the domain still holds, so it never brings a released node back.
 - A stale computed recomputes a little earlier than it would have.
 - A computed that throws is reported as failed instead of rethrown.
+- A resource waiting on its promise, and a computed waiting on one, is reported as pending, with no value.
 
 ## Your own inspector
 
@@ -33,8 +34,13 @@ function Inspector() {
   return (
     <ul>
       {useAtemnoGraph().map(node => (
-        <li key={node.name}>
-          {node.kind} {node.name}: {node.failed ? 'error' : String(node.value)}
+        <li key={`${node.kind}:${node.name}`}>
+          {node.kind} {node.name}:{' '}
+          {node.pending
+            ? 'pending'
+            : node.failed
+              ? 'error'
+              : String(node.value)}
         </li>
       ))}
     </ul>

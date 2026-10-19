@@ -1611,6 +1611,19 @@ pre.twinkleplop {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.demo-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.demo-field .demo-input {
+  width: 96px;
+}
+
 .demo-input-wide {
   flex: 1;
   font-family: var(--font-mono);

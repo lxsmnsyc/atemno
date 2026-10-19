@@ -107,3 +107,40 @@ test('code groups switch library together and copy the visible tab', async ({
   expect(copied).toContain("from 'jotai'");
   expect(copied).not.toContain('atemno');
 });
+
+test('a proxy atom writes through to the atom it derives from', async ({
+  page,
+}) => {
+  await page.goto('/docs/proxy-atoms');
+  const demo = page.locator('.demo').first();
+  const celsius = demo.getByLabel('°C');
+  const fahrenheit = demo.getByLabel('°F');
+
+  await expect(fahrenheit).toHaveValue('68');
+  await fahrenheit.fill('212');
+  await expect(celsius).toHaveValue('100');
+  await celsius.fill('0');
+  await expect(fahrenheit).toHaveValue('32');
+});
+
+test('a resource shows its pending state and keeps only the latest request', async ({
+  page,
+}) => {
+  await page.goto('/docs/resources');
+  const demo = page.locator('.demo').first();
+  const status = demo.locator('[data-status]');
+
+  await expect(status).toHaveText('Loading…');
+  await expect(status).toHaveText('Ada Lovelace', { timeout: 5000 });
+
+  // User 2 answers after user 3 does, and must not replace it.
+  await demo.getByRole('button', { name: 'Next user' }).click();
+  await demo.getByRole('button', { name: 'Next user' }).click();
+  await expect(status).toHaveText('Loading…');
+  await expect(status).toHaveText('Alan Turing', { timeout: 5000 });
+  await page.waitForTimeout(600);
+  await expect(status).toHaveText('Alan Turing');
+
+  await demo.getByRole('button', { name: 'Next user' }).click();
+  await expect(status).toHaveText('No user 4', { timeout: 5000 });
+});

@@ -44,6 +44,20 @@ const domain = new ReactiveDomain({
 });
 ```
 
+## Weak observers
+
+`observeWeak` subscribes like `observe`, without keeping anything alive. The source is released once nothing else tracks it, as if the weak observer were not there, and the weak observer ends with it. Unsubscribing a weak observer never releases anything.
+
+```ts
+const stop = domain.observeWeak(cart, value => log('cart', value));
+```
+
+Use it to watch state that other parts of the program own, such as logging, analytics or an inspector, without changing what stays in memory.
+
+## Pending resources
+
+An observer of a [resource](./resources.md), or of a computed reading one, is not called while the resource is pending. It is called once the resource settles.
+
 ## Unsubscribing can release nodes
 
 When the last subscription to a source ends and nothing else tracks it, the domain releases the node, and anything only it was reading. See [node lifetime](./node-lifetime.md).

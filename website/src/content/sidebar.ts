@@ -18,6 +18,8 @@ export const SIDEBAR: SidebarSection[] = [
       'domains',
       'observing',
       'computeds',
+      'proxy-atoms',
+      'resources',
       'propagation',
       'dynamic-dependencies',
       'errors',

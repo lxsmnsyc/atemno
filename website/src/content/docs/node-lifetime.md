@@ -26,6 +26,8 @@ Nothing holds `draft`. Write to it, switch **observe shout** off, and both nodes
 
 Release cascades. A computed that is released stops tracking what it read, which can release those in turn.
 
+[Weak observers](./observing.md#weak-observers) do not count. A node watched only by weak observers is released when its last other tracker lets go, and the weak observers end with it.
+
 ## Never tracked, never released
 
 A node that nothing ever tracked is not released on its own. Reading and writing an atom without observing it keeps its value for the life of the domain.

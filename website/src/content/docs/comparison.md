@@ -10,10 +10,10 @@ description: All three split state into atoms and derive the rest. They differ i
 | Scope              | Framework agnostic core, with a React binding | React, with a store usable on its own | React                                |
 | Where state lives  | An explicit `ReactiveDomain`, always          | A default store, `Provider` optional  | A `RecoilRoot`, required             |
 | Atom identity      | A string name you choose                      | The atom object                       | A string key, unique across the app  |
-| Derived state      | `computed`, lazy and cached                   | Derived atoms                         | Selectors                            |
+| Derived state      | `computed` and writable `proxy`, lazy, cached | Derived atoms                         | Selectors                            |
 | Keyed state        | `atomFactory`, `computedFactory`              | `atomFamily` from `jotai-family`      | `atomFamily`, `selectorFamily`       |
 | Grouped writes     | `action`, bound to a domain                   | Write functions on atoms              | `useRecoilCallback` and transactions |
-| Async and Suspense | Nothing built in                              | Promises with Suspense                | Async selectors with Suspense        |
+| Async and Suspense | `resource`, with Suspense in React            | Promises with Suspense                | Async selectors with Suspense        |
 | State lifetime     | Released once nothing tracks it               | As long as the store                  | As long as the root                  |
 | Maturity           | Not released yet                              | Stable, widely used                   | No longer under active development   |
 
@@ -287,6 +287,6 @@ The atemno core has no React in it. Every demo on this site uses no framework at
 
 ## When to pick the others
 
-Pick Jotai. It is stable, it has a large community, and it answers questions atemno does not yet, async state and Suspense being the obvious one. atemno has not had a release.
+Pick Jotai. It is stable, it has a large community, and its async support has been used in production for years. atemno's resources are new, and atemno has not had a release.
 
 Recoil is worth reading for its ideas, but it is no longer under active development, so it is not where new work should start.
