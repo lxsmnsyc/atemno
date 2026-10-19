@@ -23,7 +23,8 @@ import type {
   Result,
   WritableSource,
 } from '../index';
-import { ReactiveDomain, ResourceNotReadyError, toResult } from '../index';
+import { isSameResult, readResult } from '../concurrency';
+import { ReactiveDomain, ResourceNotReadyError } from '../index';
 import { NodeType } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -374,18 +375,6 @@ export function useAtemnoDomain(): ReactiveDomain {
 // Reading and writing
 // ---------------------------------------------------------------------------
 
-function isSameResult<T>(previous: Result<T>, next: Result<T>): boolean {
-  switch (next.type) {
-    case 'pending':
-      return previous.type === 'pending' && previous.request === next.request;
-    case 'success':
-    case 'failure':
-      return (
-        previous.type === next.type && Object.is(previous.value, next.value)
-      );
-  }
-}
-
 // `use` arrived in React 19. React 18 suspends on a thrown promise instead.
 const reactUse = (React as { use?: <T>(usable: Promise<T>) => T }).use;
 
@@ -407,7 +396,7 @@ function useSourceValue<T>(source: ReadableSource<T>): T {
   // useSyncExternalStore compares snapshots by identity.
   const last = useRef<Result<T> | undefined>(undefined);
   const read = useCallback((): Result<T> => {
-    const next = toResult(() => domain.get(source));
+    const next = readResult(() => domain.get(source));
     if (last.current && isSameResult(last.current, next)) {
       return last.current;
     }

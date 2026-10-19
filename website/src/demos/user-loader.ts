@@ -1,4 +1,4 @@
-import { ReactiveDomain, atom, computed, resource, toResult } from 'atemno';
+import { ReactiveDomain, atom, resource, toResult } from 'atemno';
 import type { Result } from 'atemno';
 import { query } from './dom';
 
@@ -22,10 +22,8 @@ const userId = atom('userId', 1);
 const user = resource<string>('user', $ => fetchUser($.get(userId)));
 
 // toResult turns the pending state and the error into values, so this
-// computed changes on every step: loading, loaded, failed.
-const status = computed<Result<string>>('status', $ =>
-  toResult(() => $.get(user)),
-);
+// source changes on every step: loading, loaded, failed.
+const status = toResult(user);
 
 export function mount(root: HTMLElement): () => void {
   root.innerHTML = `

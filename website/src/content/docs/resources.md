@@ -47,7 +47,7 @@ try {
 }
 ```
 
-`toResult` does the same without the `try`. It is described below.
+`domain.get(toResult(user))` does the same without the `try`. It is described below.
 
 ## Only reads before the first await are tracked
 
@@ -85,40 +85,35 @@ A computed that reads a pending resource throws the same `ResourceNotReadyError`
 
 An observer is not called while its source is pending, and pending is not an error, so `onError` does not hear about it. The observer is called once the resource settles. A rejection goes to `onError` like any other error from a read.
 
-To show every state, loading included, observe a computed that wraps the read in `toResult`. It changes on each step, so its observer is called for all of them. The demo above does this.
+To show every state, loading included, observe `toResult(user)` instead. It changes on each step, so its observer is called for all of them. The demo above does this.
 
 ```ts
-const status = computed<Result<User>>('status', $ =>
-  toResult(() => $.get(user)),
-);
-
-domain.observe(status, result => render(result));
+domain.observe(toResult(user), result => render(result));
 ```
 
 ## Waiting on several
 
-Each helper takes a list of read functions, such as `() => $.get(user)`, so they work inside computations, in actions and on a domain directly.
+The helpers take sources and return a computed, which you read like any other: `$.get`, `domain.get` or `useComputedValue`.
 
-| Helper               | Returns                                  | Pending when                      | Throws                                 |
-| -------------------- | ---------------------------------------- | --------------------------------- | -------------------------------------- |
-| `toResult(read)`     | `{ type, value }` or `{ type, request }` | never, it reports it              | never                                  |
-| `isPending(read)`    | whether the read is pending              | never, it reports it              | never                                  |
-| `waitForNone(reads)` | one result per read                      | never, it reports it              | never                                  |
-| `waitForAll(reads)`  | every value                              | any is pending                    | an `AggregateError` if any failed      |
-| `waitForAny(reads)`  | the first success                        | none succeeded and any is pending | an `AggregateError` if all failed      |
-| `waitForRace(reads)` | the first to settle                      | all are pending                   | the error, if the first settled failed |
+| Helper                 | Holds                                          | Pending while                    | Throws                                  |
+| ---------------------- | ---------------------------------------------- | -------------------------------- | --------------------------------------- |
+| `toResult(source)`     | `{ type, value }` or `{ type, request }`       | never, it reports it             | never                                   |
+| `isPending(source)`    | whether the source is pending                  | never, it reports it             | never                                   |
+| `waitForNone(sources)` | one result per source                          | never, it reports it             | never                                   |
+| `waitForAll(sources)`  | every value                                    | any is pending                   | an `AggregateError` if any failed       |
+| `waitForAny(sources)`  | the first value, in list order, that resolved  | none resolved and any is pending | an `AggregateError` if all failed       |
+| `waitForRace(sources)` | the first outcome, in list order, that settled | all are pending                  | the error, if that outcome is a failure |
 
 ```ts
 import { computed, waitForAll } from 'atemno';
 
 const profile = computed<string>('profile', $ => {
-  const [owner, prefs] = waitForAll([
-    () => $.get(account),
-    () => $.get(settings),
-  ]);
+  const [owner, prefs] = $.get(waitForAll([account, settings]));
   return `${owner.name} (${prefs.theme})`;
 });
 ```
+
+Each call with the same sources returns the same description, named after them, such as `waitForAll(resource:account, resource:settings)`. That keeps it cheap to call during render and readable in the devtools graph.
 
 ## In React
 

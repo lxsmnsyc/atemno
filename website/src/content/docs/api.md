@@ -5,24 +5,24 @@ description: Every export of atemno and atemno/react.
 
 ## atemno
 
-| Export                                      | Description                                    |
-| ------------------------------------------- | ---------------------------------------------- |
-| `atom(name, initialValue, isEqual?)`        | Describes a writable value.                    |
-| `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first use. |
-| `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.  |
-| `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written. |
-| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.   |
-| `ResourceNotReadyError`                     | Thrown when reading a pending resource.        |
-| `toResult(read)`                            | Describes a read without throwing.             |
-| `isPending(read)`                           | Tells whether a read is pending.               |
-| `waitForNone(reads)`                        | One result per read.                           |
-| `waitForAll(reads)`                         | Every value, once all resolved.                |
-| `waitForAny(reads)`                         | The first value that resolved.                 |
-| `waitForRace(reads)`                        | The first read to settle.                      |
-| `action(callback)`                          | Describes a set of reads and writes.           |
-| `atomFactory(name, options)`                | Builds a cached atom per key.                  |
-| `computedFactory(name, options)`            | Builds a cached computed per key.              |
-| `new ReactiveDomain(options)`               | Holds the state for a set of sources.          |
+| Export                                      | Description                                     |
+| ------------------------------------------- | ----------------------------------------------- |
+| `atom(name, initialValue, isEqual?)`        | Describes a writable value.                     |
+| `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first use.  |
+| `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.   |
+| `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.  |
+| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.    |
+| `ResourceNotReadyError`                     | Thrown when reading a pending resource.         |
+| `toResult(source)`                          | A computed describing a read, never throwing.   |
+| `isPending(source)`                         | A computed telling whether it is pending.       |
+| `waitForNone(sources)`                      | A computed with one result per source.          |
+| `waitForAll(sources)`                       | A computed with every value, once all resolved. |
+| `waitForAny(sources)`                       | A computed with the first value that resolved.  |
+| `waitForRace(sources)`                      | A computed with the first outcome to settle.    |
+| `action(callback)`                          | Describes a set of reads and writes.            |
+| `atomFactory(name, options)`                | Builds a cached atom per key.                   |
+| `computedFactory(name, options)`            | Builds a cached computed per key.               |
+| `new ReactiveDomain(options)`               | Holds the state for a set of sources.           |
 
 ## ReactiveDomain
 

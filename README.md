@@ -306,7 +306,7 @@ const user = resource('user', async $ => {
   return response.json();
 });
 
-toResult(() => domain.get(user)); // { type: 'pending', request }
+domain.get(toResult(user)); // { type: 'pending', request }
 ```
 
 Only the reads made before the first `await` are tracked. Each run replaces the
@@ -314,8 +314,12 @@ one before it, and the result of a replaced run is dropped. A computed reading a
 pending resource is pending too, and observers are only called once it settles.
 
 `toResult`, `isPending`, `waitForNone`, `waitForAll`, `waitForAny` and
-`waitForRace` take read functions such as `() => $.get(user)` and combine
-pending, failed and resolved reads.
+`waitForRace` take sources and return a computed that combines them, read like
+any other source:
+
+```js
+const [owner, prefs] = domain.get(waitForAll([account, settings]));
+```
 
 ### Actions
 
@@ -430,9 +434,9 @@ every read of it is `unknown`.
 | `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.    |
 | `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.      |
 | `ResourceNotReadyError`                     | Thrown when reading a pending resource.           |
-| `toResult(read)`, `isPending(read)`         | Describe a read without throwing.                 |
-| `waitForNone`, `waitForAll`                 | Combine several reads.                            |
-| `waitForAny`, `waitForRace`                 | Take the first of several reads.                  |
+| `toResult(source)`, `isPending(source)`     | Computeds describing a read, never throwing.      |
+| `waitForNone`, `waitForAll`                 | Computeds combining several sources.              |
+| `waitForAny`, `waitForRace`                 | Computeds taking the first of several sources.    |
 | `action(callback)`                          | Describes a set of reads and writes.              |
 | `atomFactory(name, options)`                | Builds a cached atom per key.                     |
 | `computedFactory(name, options)`            | Builds a cached computed per key.                 |
