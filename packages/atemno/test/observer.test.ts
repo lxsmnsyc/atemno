@@ -188,4 +188,102 @@ describe('observe', () => {
 
     expect(() => domain.set(count, 1)).toThrow('boom');
   });
+  it('runs each computed in an observed diamond once per write', () => {
+    const domain = createDomain();
+    const runs = { b: 0, c: 0, d: 0 };
+    const a = atom('a', 1);
+    const b = computed<number>('b', $ => {
+      runs.b++;
+      return $.get(a) + 1;
+    });
+    const c = computed<number>('c', $ => {
+      runs.c++;
+      return $.get(a) * 2;
+    });
+    const d = computed<number>('d', $ => {
+      runs.d++;
+      return $.get(b) + $.get(c);
+    });
+    const seen: number[] = [];
+    domain.observe(d, value => seen.push(value));
+    runs.b = runs.c = runs.d = 0;
+
+    domain.set(a, 2);
+    domain.set(a, 3);
+
+    expect(runs).toEqual({ b: 2, c: 2, d: 2 });
+    expect(seen).toEqual([7, 10]);
+  });
+
+  it('runs a deep diamond once per write', () => {
+    const domain = createDomain();
+    let tailRuns = 0;
+    const a = atom('a', 0);
+    const left = computed<number>('left', $ => $.get(a) + 1);
+    const right = computed<number>('right', $ => $.get(a) - 1);
+    const leftDeep = computed<number>('left-deep', $ => $.get(left) * 10);
+    const join = computed<number>(
+      'join',
+      $ => $.get(leftDeep) + $.get(right) + $.get(a),
+    );
+    const tail = computed<number>('tail', $ => {
+      tailRuns++;
+      return $.get(join);
+    });
+    const seen: number[] = [];
+    domain.observe(tail, value => seen.push(value));
+    domain.observe(join, () => {});
+    tailRuns = 0;
+
+    domain.set(a, 1);
+
+    expect(tailRuns).toBe(1);
+    expect(seen).toEqual([21]);
+  });
+
+  it('only shows observers settled values', () => {
+    const domain = createDomain();
+    const first = atom('first', 'Ada');
+    const last = atom('last', 'Lovelace');
+    const upper = computed<string>('upper', $ => $.get(first).toUpperCase());
+    const full = computed<string>(
+      'full',
+      $ => `${$.get(first)} ${$.get(last)} (${$.get(upper)})`,
+    );
+    const seen: string[] = [];
+    domain.observe(full, value => seen.push(value));
+
+    domain.set(first, 'Grace');
+
+    expect(seen).toEqual(['Grace Lovelace (GRACE)']);
+  });
+
+  it('fires observers of a computed that is reset', () => {
+    const domain = createDomain();
+    let tick = 0;
+    const clock = computed<number>('clock', () => ++tick);
+    const seen: number[] = [];
+    domain.observe(clock, value => seen.push(value));
+
+    domain.reset(clock);
+
+    expect(seen).toEqual([2]);
+  });
+
+  it('keeps propagating after an observer throws', () => {
+    const domain = createDomain();
+    const count = atom('count', 0);
+    const seen: number[] = [];
+    domain.observe(count, value => {
+      if (value === 1) {
+        throw new Error('boom');
+      }
+      seen.push(value);
+    });
+
+    expect(() => domain.set(count, 1)).toThrow('boom');
+    domain.set(count, 2);
+
+    expect(seen).toEqual([2]);
+  });
 });

@@ -103,6 +103,16 @@ export class ReactiveDomain {
 
   private observersCount = 0;
 
+  /**
+   * Observers marked by the current write, waiting to be revalidated once
+   * every affected node has been marked.
+   * @internal
+   */
+  pending: ObserverNode<any>[] = [];
+
+  /** @internal */
+  flushing = false;
+
   constructor(private options: ReactiveDomainOptions) {}
 
   destroy(): void {
@@ -305,6 +315,9 @@ export class ReactiveDomain {
       trackNode(observer.tracker, instance);
     }
 
+    // The observer starts in sync with its source, so the next write marks it
+    observer.tracker.state = State.Clean;
+
     // Add to active observers
     this.observers.push(observer);
 
@@ -415,6 +428,11 @@ class Trackable {
 class Tracker {
   alive = true;
   state: State = State.Uninitialized;
+  /**
+   * Whether the tracker's computation is executing. Its dependencies are read
+   * fresh while it runs, so their updates must not mark it again.
+   */
+  running = false;
   trackables: Set<Trackable> | undefined;
   context: TrackerContextInternal | undefined = undefined;
 
@@ -616,45 +634,85 @@ function handleError(
   }
 }
 
-function notifyTrackers(
+/**
+ * Marks every node downstream of a trackable without evaluating anything:
+ * direct trackers with the given state, and the trackers behind them as
+ * maybe stale. Observers that become stale are queued, so they only run once
+ * the whole graph is marked and each computed is pulled at most once.
+ *
+ * A trackable is marked when it was clean, so a node reachable through
+ * several paths is visited once per write.
+ */
+function markTrackers(
   domain: ReactiveDomain,
   node: Trackable,
-  state: State,
+  state: State.Check | State.Dirty,
+  skipRunning: boolean,
 ): void {
   if (!(node.alive && node.trackers && node.trackers.size)) {
     return;
   }
-  const trackers = [...node.trackers];
-  // Mark trackers with the new state
-  for (const tracker of trackers) {
-    tracker.state = state;
-  }
-  // 1st step, notify each tracker with the new state
-  // This is a recursive process, which defers
-  // any observers from immediately occuring
-  for (const tracker of trackers) {
-    if (tracker.parent.type === NodeType.Computed) {
-      notifyTrackers(domain, tracker.parent.trackable, State.Check);
+  for (const tracker of node.trackers) {
+    if ((skipRunning && tracker.running) || tracker.state >= state) {
+      continue;
     }
-  }
-  // 2nd step, run the observers.
-  for (const tracker of trackers) {
-    if (tracker.parent.type === NodeType.Observer) {
-      revalidateObserver(domain, tracker.parent);
+    const wasClean = tracker.state === State.Clean;
+    tracker.state = state;
+    if (wasClean) {
+      if (tracker.parent.type === NodeType.Computed) {
+        markTrackers(domain, tracker.parent.trackable, State.Check, false);
+      } else {
+        domain.pending.push(tracker.parent);
+      }
     }
   }
 }
 
+/**
+ * Revalidates the queued observers. Observers that write while the queue is
+ * being flushed append to it instead of starting a nested flush. An observer
+ * that throws does not stop the others, the first error is rethrown after.
+ */
+function flushObservers(domain: ReactiveDomain): void {
+  if (domain.flushing) {
+    return;
+  }
+  domain.flushing = true;
+  let failed = false;
+  let failure: unknown;
+  try {
+    for (let i = 0; i < domain.pending.length; i++) {
+      try {
+        revalidateObserver(domain, domain.pending[i]);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
+    }
+  } finally {
+    domain.pending = [];
+    domain.flushing = false;
+  }
+  if (failed) {
+    throw failure;
+  }
+}
+
+/**
+ * @param fromComputed the write is a computed taking a new value while it is
+ * pulled, so the tracker reading it right now already sees that value.
+ */
 function writeTrackable(
   domain: ReactiveDomain,
   node: Trackable,
-  notify: boolean,
+  fromComputed: boolean,
 ): void {
   if (node.alive) {
     node.version++;
-    if (notify) {
-      notifyTrackers(domain, node, State.Dirty);
-    }
+    markTrackers(domain, node, State.Dirty, fromComputed);
+    flushObservers(domain);
   }
 }
 
@@ -698,7 +756,7 @@ function writeAtomNode<T>(
 ): void {
   if (!node.source.isEqual(node.value, value)) {
     node.value = value;
-    writeTrackable(domain, node.trackable, true);
+    writeTrackable(domain, node.trackable, false);
 
     domain.onUpdate(node.source);
   }
@@ -758,16 +816,24 @@ function updateComputed<T>(
   node.tracker.state = State.Clean;
 
   // Attempt to recompute
+  let result: ComputedResult<T>;
+  node.tracker.running = true;
   try {
-    writeComputedSuccess(
-      domain,
-      node,
-      node.source.compute(
+    result = {
+      type: ComputedState.Success,
+      value: node.source.compute(
         updateTrackerContext(domain, node.tracker, node.prev),
       ),
-    );
+    };
   } catch (error) {
-    writeComputedFailure(domain, node, error);
+    result = { type: ComputedState.Failure, value: error };
+  } finally {
+    node.tracker.running = false;
+  }
+  if (result.type === ComputedState.Success) {
+    writeComputedSuccess(domain, node, result.value);
+  } else {
+    writeComputedFailure(domain, node, result.value);
   }
 
   releaseUnusedTrackables(domain, node.tracker, previous);
@@ -778,8 +844,18 @@ function updateObserver<T>(
   node: ObserverNode<T>,
 ): void {
   node.tracker.state = State.Clean;
+  let value: T;
+  node.tracker.running = true;
   try {
-    node.compute(domain.get(node.source));
+    value = domain.get(node.source);
+  } catch (error) {
+    handleError(domain, error, node.options);
+    return;
+  } finally {
+    node.tracker.running = false;
+  }
+  try {
+    node.compute(value);
   } catch (error) {
     handleError(domain, error, node.options);
   }
