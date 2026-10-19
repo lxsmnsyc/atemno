@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import * as React from 'react';
 import {
   createContext,
   createElement,
@@ -15,20 +16,26 @@ import {
 import type {
   Action,
   Cleanup,
-  Computed,
+  DerivedSource,
   NormalAction,
   ReactiveDomainOptions,
   ReadableSource,
+  Result,
   WritableSource,
 } from '../index';
-import { ReactiveDomain } from '../index';
+import { ReactiveDomain, ResourceNotReadyError, toResult } from '../index';
 import { NodeType } from '../types';
 
 // ---------------------------------------------------------------------------
 // Graph inspection
 // ---------------------------------------------------------------------------
 
-export type AtemnoNodeKind = 'atom' | 'lazyAtom' | 'computed';
+export type AtemnoNodeKind =
+  | 'atom'
+  | 'lazyAtom'
+  | 'computed'
+  | 'proxy'
+  | 'resource';
 
 export interface AtemnoNodeSnapshot {
   name: string;
@@ -42,6 +49,11 @@ export interface AtemnoNodeSnapshot {
    */
   error?: unknown;
   failed: boolean;
+  /**
+   * Whether the node is a resource still waiting on its promise, or a
+   * computed waiting on one. A pending node has no value and is not failed.
+   */
+  pending: boolean;
 }
 
 interface GraphSnapshot {
@@ -66,9 +78,18 @@ function kindOf(source: ReadableSource<any>): AtemnoNodeKind {
       return 'atom';
     case NodeType.Computed:
       return 'computed';
-    default:
+    case NodeType.Proxy:
+      return 'proxy';
+    case NodeType.Resource:
+      return 'resource';
+    case NodeType.LazyAtom:
       return 'lazyAtom';
   }
+}
+
+/** Each kind of node has its own namespace of names in a domain. */
+function keyOf(source: ReadableSource<any>): string {
+  return `${kindOf(source)}:${source.name}`;
 }
 
 /**
@@ -89,15 +110,23 @@ function createGraphRegistry(): GraphRegistry {
   function read(source: ReadableSource<any>): AtemnoNodeSnapshot {
     const base = { name: source.name, kind: kindOf(source) };
     if (!domain) {
-      return { ...base, failed: false };
+      return { ...base, failed: false, pending: false };
     }
     try {
       // Only nodes the domain still holds are read, so this never revives a
       // released one. A stale computed does recompute here, earlier than it
       // otherwise would have.
-      return { ...base, value: domain.get(source), failed: false };
+      return {
+        ...base,
+        value: domain.get(source),
+        failed: false,
+        pending: false,
+      };
     } catch (error) {
-      return { ...base, error, failed: true };
+      if (error instanceof ResourceNotReadyError) {
+        return { ...base, failed: false, pending: true };
+      }
+      return { ...base, error, failed: true, pending: false };
     }
   }
 
@@ -124,12 +153,12 @@ function createGraphRegistry(): GraphRegistry {
       domain = next;
     },
     add(source) {
-      sources.set(source.name, source);
+      sources.set(keyOf(source), source);
       schedule();
     },
     touch: schedule,
     remove(source) {
-      sources.delete(source.name);
+      sources.delete(keyOf(source));
       schedule();
     },
     subscribe(listener) {
@@ -181,7 +210,10 @@ export function AtemnoGraph(): ReactNode {
     Fragment,
     null,
     nodes.map(node =>
-      createElement(NODE_COMPONENTS[node.kind], { key: node.name, ...node }),
+      createElement(NODE_COMPONENTS[node.kind], {
+        key: `${node.kind}:${node.name}`,
+        ...node,
+      }),
     ),
   );
 }
@@ -209,6 +241,16 @@ function ComputedNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
 }
 ComputedNodeElement.displayName = 'Computed';
 
+function ProxyAtomNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+ProxyAtomNodeElement.displayName = 'ProxyAtom';
+
+function ResourceNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+ResourceNodeElement.displayName = 'Resource';
+
 const NODE_COMPONENTS: Record<
   AtemnoNodeKind,
   (props: AtemnoNodeSnapshot) => ReactNode
@@ -216,6 +258,8 @@ const NODE_COMPONENTS: Record<
   atom: AtomNodeElement,
   lazyAtom: LazyAtomNodeElement,
   computed: ComputedNodeElement,
+  proxy: ProxyAtomNodeElement,
+  resource: ResourceNodeElement,
 };
 
 // ---------------------------------------------------------------------------
@@ -330,6 +374,28 @@ export function useAtemnoDomain(): ReactiveDomain {
 // Reading and writing
 // ---------------------------------------------------------------------------
 
+function isSameResult<T>(previous: Result<T>, next: Result<T>): boolean {
+  switch (next.type) {
+    case 'pending':
+      return previous.type === 'pending' && previous.request === next.request;
+    case 'success':
+    case 'failure':
+      return (
+        previous.type === next.type && Object.is(previous.value, next.value)
+      );
+  }
+}
+
+// `use` arrived in React 19. React 18 suspends on a thrown promise instead.
+const reactUse = (React as { use?: <T>(usable: Promise<T>) => T }).use;
+
+function suspend(request: Promise<unknown>): never {
+  if (reactUse) {
+    reactUse(request);
+  }
+  throw request;
+}
+
 function useSourceValue<T>(source: ReadableSource<T>): T {
   const domain = useAtemnoDomain();
 
@@ -337,13 +403,30 @@ function useSourceValue<T>(source: ReadableSource<T>): T {
     (onChange: () => void) => domain.observe(source, onChange),
     [domain, source],
   );
-  const read = useCallback(() => domain.get(source), [domain, source]);
+  // The snapshot is the outcome of the read, kept while it is the same, since
+  // useSyncExternalStore compares snapshots by identity.
+  const last = useRef<Result<T> | undefined>(undefined);
+  const read = useCallback((): Result<T> => {
+    const next = toResult(() => domain.get(source));
+    if (last.current && isSameResult(last.current, next)) {
+      return last.current;
+    }
+    last.current = next;
+    return next;
+  }, [domain, source]);
 
   // The third argument covers server rendering, where there is nothing to
   // subscribe to.
-  const value = useSyncExternalStore(subscribe, read, read);
-  useDebugValue(value);
-  return value;
+  const result = useSyncExternalStore(subscribe, read, read);
+  useDebugValue(result);
+  switch (result.type) {
+    case 'success':
+      return result.value;
+    case 'failure':
+      throw result.value;
+    case 'pending':
+      return suspend(result.request);
+  }
 }
 
 export type AtomUpdate<T> = T | ((previous: T) => T);
@@ -354,17 +437,22 @@ function isUpdater<T>(update: AtomUpdate<T>): update is (previous: T) => T {
 }
 
 /**
- * Reads an atom or lazy atom and rerenders when it changes.
+ * Reads an atom, lazy atom or proxy atom and rerenders when it changes.
+ * Suspends while a proxy atom waits on a pending resource.
  */
 export function useAtomValue<T>(source: WritableSource<T>): T {
   return useSourceValue(source);
 }
 
 /**
- * Reads a computed and rerenders when it changes. Evaluates the computed if
- * nothing has yet.
+ * Reads a computed, proxy atom or resource and rerenders when it changes.
+ * Evaluates it if nothing has yet.
+ *
+ * While a resource, or a computed reading one, waits on its promise, the
+ * component suspends, so the nearest `Suspense` boundary shows its fallback.
+ * A rejection or a thrown error goes to the nearest error boundary.
  */
-export function useComputedValue<T>(source: Computed<T>): T {
+export function useComputedValue<T>(source: DerivedSource<T>): T {
   return useSourceValue(source);
 }
 

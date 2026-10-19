@@ -166,6 +166,10 @@ const value = domain.get(message);
 const stop = domain.observe(message, onChange);
 ```
 
+`observeWeak` subscribes the same way without keeping the source alive. The
+source is released once nothing else tracks it, and the weak observer ends with
+it. Removing a weak observer never releases anything.
+
 ### Computeds
 
 A computed derives a value from other atoms and computeds. It receives a
@@ -261,6 +265,57 @@ domain.get(guarded); // "ok"
 
 Errors thrown inside an observer callback go to `onError` instead. Without an
 `onError` handler they are rethrown to the caller that triggered the write.
+
+### Proxy atoms
+
+A proxy atom reads like a computed and writes like an atom. A write runs your
+`set`, which passes the value on to the sources the proxy is derived from.
+
+```js
+import { proxy } from 'atemno';
+
+const celsius = atom('celsius', 20);
+const fahrenheit = proxy('fahrenheit', {
+  get: $ => ($.get(celsius) * 9) / 5 + 32,
+  set($, value) {
+    $.set(celsius, ((value - 32) * 5) / 9);
+  },
+});
+
+domain.get(fahrenheit); // 68
+domain.set(fahrenheit, 212);
+domain.get(celsius); // 100
+```
+
+A proxy atom stores nothing of its own, and it is accepted anywhere a writable
+source is.
+
+### Resources
+
+A resource is a computed whose computation can return a promise. While the
+promise is pending, reading it throws a `ResourceNotReadyError` whose `request`
+is the promise. Once it settles, reading it returns the value or rethrows the
+rejection.
+
+```js
+import { resource, toResult } from 'atemno';
+
+const userId = atom('userId', 1);
+const user = resource('user', async $ => {
+  const response = await fetch(`/api/users/${$.get(userId)}`);
+  return response.json();
+});
+
+toResult(() => domain.get(user)); // { type: 'pending', request }
+```
+
+Only the reads made before the first `await` are tracked. Each run replaces the
+one before it, and the result of a replaced run is dropped. A computed reading a
+pending resource is pending too, and observers are only called once it settles.
+
+`toResult`, `isPending`, `waitForNone`, `waitForAll`, `waitForAny` and
+`waitForRace` take read functions such as `() => $.get(user)` and combine
+pending, failed and resolved reads.
 
 ### Actions
 
@@ -372,6 +427,12 @@ every read of it is `unknown`.
 | `atom(name, initialValue, isEqual?)`        | Describes a writable value.                       |
 | `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first read.   |
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.     |
+| `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.    |
+| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.      |
+| `ResourceNotReadyError`                     | Thrown when reading a pending resource.           |
+| `toResult(read)`, `isPending(read)`         | Describe a read without throwing.                 |
+| `waitForNone`, `waitForAll`                 | Combine several reads.                            |
+| `waitForAny`, `waitForRace`                 | Take the first of several reads.                  |
 | `action(callback)`                          | Describes a set of reads and writes.              |
 | `atomFactory(name, options)`                | Builds a cached atom per key.                     |
 | `computedFactory(name, options)`            | Builds a cached computed per key.                 |
@@ -382,13 +443,14 @@ every read of it is `unknown`.
 | Method                      | Description                                                      |
 | --------------------------- | ---------------------------------------------------------------- |
 | `get(source)`               | Reads any source, initializing it if needed.                     |
-| `set(source, value)`        | Writes an atom or lazy atom. Ignored if the value is equal.      |
+| `set(source, value)`        | Writes an atom or lazy atom, or passes a value to a proxy atom.  |
 | `reset(source)`             | Restores an atom's initial value, or forces a computed to rerun. |
 | `observe(source, callback)` | Subscribes to changes. Returns a cleanup function.               |
+| `observeWeak(source, cb)`   | Subscribes without keeping the source alive.                     |
 | `getAction(action)`         | Binds an action to this domain.                                  |
 | `destroyAtom(source)`       | Releases one atom's node.                                        |
 | `destroyLazyAtom(source)`   | Releases one lazy atom's node.                                   |
-| `destroyComputed(source)`   | Releases one computed's node.                                    |
+| `destroyComputed(source)`   | Releases one computed's, proxy atom's or resource's node.        |
 | `destroy()`                 | Tears down the domain.                                           |
 
 ## React
@@ -560,8 +622,8 @@ pnpm --filter atemno-example-react run dev
 | `AtemnoProvider`           | Supplies a domain you built yourself.                  |
 | `AtemnoGraph`              | Renders the graph as elements for the developer tools. |
 | `useAtemnoDomain()`        | Returns the nearest domain.                            |
-| `useAtomValue(source)`     | Reads an atom or lazy atom.                            |
-| `useComputedValue(source)` | Reads a computed.                                      |
+| `useAtomValue(source)`     | Reads an atom, lazy atom or proxy atom.                |
+| `useComputedValue(source)` | Reads a computed, proxy atom or resource. Suspends.    |
 | `useSetAtom(source)`       | Returns a setter, without subscribing.                 |
 | `useAtomState(source)`     | Returns `[value, setter]`.                             |
 | `useResetSource(source)`   | Returns a callback that resets the source.             |

@@ -5,12 +5,21 @@ describe('public entry point', () => {
   it('exports the full value surface', () => {
     expect(Object.keys(atemno).sort()).toEqual([
       'ReactiveDomain',
+      'ResourceNotReadyError',
       'action',
       'atom',
       'atomFactory',
       'computed',
       'computedFactory',
+      'isPending',
       'lazyAtom',
+      'proxy',
+      'resource',
+      'toResult',
+      'waitForAll',
+      'waitForAny',
+      'waitForNone',
+      'waitForRace',
     ]);
   });
 

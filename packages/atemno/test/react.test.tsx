@@ -343,7 +343,7 @@ describe('useAtemnoGraph', () => {
     await act(async () => {});
 
     expect(view.nodes).toEqual([
-      { name: 'count', kind: 'atom', value: 7, failed: false },
+      { name: 'count', kind: 'atom', value: 7, failed: false, pending: false },
     ]);
   });
 

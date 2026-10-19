@@ -1,15 +1,43 @@
-export { action, atom, computed, lazyAtom, ReactiveDomain } from './graph';
-export type { Action, NormalAction, ReactiveDomainOptions } from './graph';
+export {
+  action,
+  atom,
+  computed,
+  lazyAtom,
+  proxy,
+  ReactiveDomain,
+  resource,
+  ResourceNotReadyError,
+} from './graph';
+export type {
+  Action,
+  NormalAction,
+  ProxyAtomOptions,
+  ReactiveDomainOptions,
+} from './graph';
+export {
+  isPending,
+  toResult,
+  waitForAll,
+  waitForAny,
+  waitForNone,
+  waitForRace,
+} from './concurrency';
+export type { Result, Results, Values } from './concurrency';
 export type {
   ActionContext,
   Atom,
   Cleanup,
   Computation,
   Computed,
+  DerivedSource,
   IsEqual,
   LazyAtom,
+  ProxyAtom,
+  ProxyWrite,
   ReadableSource,
   Ref,
+  Resource,
+  ResourceComputation,
   TrackerContext,
   WritableSource,
 } from './types';

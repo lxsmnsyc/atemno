@@ -66,8 +66,42 @@ export interface Computed<T> {
   isEqual: IsEqual<T>;
 }
 
-export type ReadableSource<T> = Atom<T> | Computed<T> | LazyAtom<T>;
-export type WritableSource<T> = Atom<T> | LazyAtom<T>;
+/**
+ * Writes a proxy atom's value through to the sources it is derived from.
+ */
+export type ProxyWrite<T> = ($: ActionContext, value: T) => void;
+
+export interface ProxyAtom<T> {
+  type: NodeType.Proxy;
+  name: string;
+  compute: Computation<T>;
+  write: ProxyWrite<T>;
+  isEqual: IsEqual<T>;
+}
+
+/**
+ * A computation that may return a promise. Only the reads made before the
+ * first `await` are tracked.
+ */
+export type ResourceComputation<T> = ($: TrackerContext<T>) => T | Promise<T>;
+
+export interface Resource<T> {
+  type: NodeType.Resource;
+  name: string;
+  compute: ResourceComputation<T>;
+  isEqual: IsEqual<T>;
+}
+
+/** The sources a domain evaluates from other sources. */
+export type DerivedSource<T> = Computed<T> | ProxyAtom<T> | Resource<T>;
+
+export type ReadableSource<T> =
+  | Atom<T>
+  | Computed<T>
+  | LazyAtom<T>
+  | ProxyAtom<T>
+  | Resource<T>;
+export type WritableSource<T> = Atom<T> | LazyAtom<T> | ProxyAtom<T>;
 
 export interface ActionContext {
   get<T>(source: ReadableSource<T>): T;

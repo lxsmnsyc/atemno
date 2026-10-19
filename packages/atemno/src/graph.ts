@@ -5,10 +5,15 @@ import type {
   Cleanup,
   Computation,
   Computed,
+  DerivedSource,
   IsEqual,
   LazyAtom,
+  ProxyAtom,
+  ProxyWrite,
   ReadableSource,
   Ref,
+  Resource,
+  ResourceComputation,
   TrackerContext,
   WritableSource,
 } from './types';
@@ -72,6 +77,65 @@ export function lazyAtom<T>(
   };
 }
 
+export interface ProxyAtomOptions<T> {
+  /** Derives the value, like a computed. */
+  get: Computation<T>;
+  /** Receives every write and passes it on to other writable sources. */
+  set: ProxyWrite<T>;
+  isEqual?: IsEqual<T>;
+}
+
+/**
+ * Creates a writable state derived from other sources. It reads like a
+ * computed, and a write to it runs `set`, which writes to the sources it is
+ * derived from.
+ * @param name a unique string to represent the proxy atom
+ */
+export function proxy<T>(
+  name: string,
+  options: ProxyAtomOptions<T>,
+): ProxyAtom<T> {
+  return {
+    type: NodeType.Proxy,
+    name,
+    compute: options.get,
+    write: options.set,
+    isEqual: options.isEqual ?? IS_EQUAL,
+  };
+}
+
+/**
+ * Creates an asynchronous computed state. While the promise its computation
+ * returns is pending, reading it throws a `ResourceNotReadyError` carrying
+ * that promise. Once it settles, reading it returns the value or rethrows the
+ * rejection. Only the reads made before the first `await` are tracked.
+ * @param name a unique string to represent the resource
+ * @param compute a function that produces the state of the resource
+ * @param isEqual tells whether the resource should update with the resolved value
+ */
+export function resource<T>(
+  name: string,
+  compute: ResourceComputation<T>,
+  isEqual?: IsEqual<T>,
+): Resource<T> {
+  return {
+    type: NodeType.Resource,
+    name,
+    compute,
+    isEqual: isEqual ?? IS_EQUAL,
+  };
+}
+
+/**
+ * Thrown when reading a resource whose promise is still pending. `request` is
+ * the promise, so a caller can wait for it.
+ */
+export class ResourceNotReadyError extends Error {
+  constructor(readonly request: Promise<unknown>) {
+    super('Resource is not yet ready.');
+  }
+}
+
 export interface ReactiveDomainOptions {
   /**
    * A default error handler that catches unhandled errors
@@ -97,11 +161,13 @@ export class ReactiveDomain {
 
   private computeds = new Map<string, ComputedNode<any>>();
 
+  private proxies = new Map<string, ComputedNode<any>>();
+
+  private resources = new Map<string, ComputedNode<any>>();
+
   private lazyAtoms = new Map<string, LazyAtomNode<any>>();
 
-  private observers: (ObserverNode<any> | undefined)[] = [];
-
-  private observersCount = 0;
+  private observers = new Set<ObserverNode<any>>();
 
   /**
    * Observers marked by the current write, waiting to be revalidated once
@@ -120,32 +186,26 @@ export class ReactiveDomain {
       return;
     }
     // Destroy all observers
-    for (
-      let i = 0,
-        len = this.observersCount,
-        observer: ObserverNode<any> | undefined;
-      i < len;
-      i++
-    ) {
-      observer = this.observers[i];
-      if (observer) {
-        destroyObserverNode(this, observer);
-      }
+    for (const observer of this.observers) {
+      destroyObserverNode(this, observer);
     }
-    // Destroy all computeds
-    for (const [, node] of this.computeds) {
-      destroyComputedNode(this, node);
+    this.observers.clear();
+    // Destroy all computeds, proxies and resources
+    for (const map of [this.computeds, this.proxies, this.resources]) {
+      for (const [, node] of map) {
+        destroyComputedNode(this, node);
+      }
+      map.clear();
     }
     // Destroy all atoms
     for (const [, node] of this.atoms) {
-      destroyAtomNode(node);
+      destroyAtomNode(this, node);
     }
     // Destroy all lazy atoms
     for (const [, node] of this.lazyAtoms) {
-      destroyAtomNode(node);
+      destroyAtomNode(this, node);
     }
 
-    this.computeds.clear();
     this.atoms.clear();
     this.lazyAtoms.clear();
 
@@ -190,16 +250,35 @@ export class ReactiveDomain {
     return instance;
   }
 
-  getComputed<T>(source: Computed<T>): ComputedNode<T> {
+  private derivedNodes(
+    source: DerivedSource<any>,
+  ): Map<string, ComputedNode<any>> {
+    switch (source.type) {
+      case NodeType.Computed:
+        return this.computeds;
+      case NodeType.Proxy:
+        return this.proxies;
+      case NodeType.Resource:
+        return this.resources;
+    }
+  }
+
+  /** @internal */
+  getDerived<T>(source: DerivedSource<T>): ComputedNode<T> {
     this.assertAlive();
-    const current = this.computeds.get(source.name);
+    const nodes = this.derivedNodes(source);
+    const current = nodes.get(source.name);
     if (current) {
       return current;
     }
     const instance = new ComputedNode(source);
-    this.computeds.set(source.name, instance);
+    nodes.set(source.name, instance);
     this.onCreate(source);
     return instance;
+  }
+
+  getComputed<T>(source: Computed<T>): ComputedNode<T> {
+    return this.getDerived(source);
   }
 
   getLazyAtom<T>(source: LazyAtom<T>): LazyAtomNode<T> {
@@ -219,8 +298,8 @@ export class ReactiveDomain {
     return instance.value;
   }
 
-  readComputed<T>(source: Computed<T>): T {
-    const instance = this.getComputed(source);
+  readComputed<T>(source: DerivedSource<T>): T {
+    const instance = this.getDerived(source);
     revalidateComputed(this, instance);
     return readComputed(instance);
   }
@@ -232,21 +311,21 @@ export class ReactiveDomain {
 
   destroyAtom<T>(source: Atom<T>): void {
     const instance = this.getAtom(source);
-    destroyAtomNode(instance);
+    destroyAtomNode(this, instance);
     this.atoms.delete(source.name);
     this.onDestroy(source);
   }
 
-  destroyComputed<T>(source: Computed<T>): void {
-    const instance = this.getComputed(source);
+  destroyComputed<T>(source: DerivedSource<T>): void {
+    const instance = this.getDerived(source);
     destroyComputedNode(this, instance);
-    this.computeds.delete(source.name);
+    this.derivedNodes(source).delete(source.name);
     this.onDestroy(source);
   }
 
   destroyLazyAtom<T>(source: LazyAtom<T>): void {
     const instance = this.getLazyAtom(source);
-    destroyAtomNode(instance);
+    destroyAtomNode(this, instance);
     this.lazyAtoms.delete(source.name);
     this.onDestroy(source);
   }
@@ -255,10 +334,12 @@ export class ReactiveDomain {
     switch (source.type) {
       case NodeType.Atom:
         return this.readAtom(source);
-      case NodeType.Computed:
-        return this.readComputed(source);
       case NodeType.LazyAtom:
         return this.readLazyAtom(source);
+      case NodeType.Computed:
+      case NodeType.Proxy:
+      case NodeType.Resource:
+        return this.readComputed(source);
     }
   }
 
@@ -270,6 +351,9 @@ export class ReactiveDomain {
           break;
         case NodeType.LazyAtom:
           writeAtomNode(this, this.getLazyAtom(source), value);
+          break;
+        case NodeType.Proxy:
+          source.write(createActionContext(this), value);
           break;
       }
     }
@@ -284,48 +368,77 @@ export class ReactiveDomain {
         writeAtomNode(this, this.getLazyAtom(source), source.initialValue());
         break;
       case NodeType.Computed:
-        updateComputed(this, this.getComputed(source));
+      case NodeType.Proxy:
+      case NodeType.Resource:
+        updateComputed(this, this.getDerived(source));
         break;
     }
   }
 
-  private destroyObserver<T>(index: number, instance: ObserverNode<T>): void {
-    // TODO does order matter?
-    this.observers[index] = this.observers[--this.observersCount];
-    this.observers[this.observersCount] = undefined;
+  private destroyObserver<T>(instance: ObserverNode<T>): void {
+    this.observers.delete(instance);
     destroyObserverNode(this, instance);
   }
 
-  observe<T>(source: ReadableSource<T>, callback: (value: T) => void): Cleanup {
+  /** @internal */
+  forgetObserver<T>(instance: ObserverNode<T>): void {
+    this.observers.delete(instance);
+  }
+
+  private addObserver<T>(observer: ObserverNode<T>): Cleanup {
     this.assertAlive();
-    // Create an observer node
-    const observer = new ObserverNode(source, callback);
+    const source = observer.source;
 
     // Track the source
-    if (source.type === NodeType.Atom) {
-      trackNode(observer.tracker, this.getAtom(source));
-    } else if (source.type === NodeType.LazyAtom) {
-      trackNode(observer.tracker, this.getLazyAtom(source));
-    } else if (source.type === NodeType.Computed) {
-      const instance = this.getComputed(source);
-      // Initialize the computed before tracking it. The first evaluation
-      // notifies its trackers, and this observer must not be one of them yet,
-      // otherwise subscribing fires the callback.
-      revalidateComputed(this, instance);
-      trackNode(observer.tracker, instance);
+    switch (source.type) {
+      case NodeType.Atom:
+        trackNode(observer.tracker, this.getAtom(source));
+        break;
+      case NodeType.LazyAtom:
+        trackNode(observer.tracker, this.getLazyAtom(source));
+        break;
+      case NodeType.Computed:
+      case NodeType.Proxy:
+      case NodeType.Resource: {
+        const instance = this.getDerived(source);
+        // Initialize the computed before tracking it. The first evaluation
+        // notifies its trackers, and this observer must not be one of them
+        // yet, otherwise subscribing fires the callback.
+        revalidateComputed(this, instance);
+        trackNode(observer.tracker, instance);
+        break;
+      }
     }
 
     // The observer starts in sync with its source, so the next write marks it
     observer.tracker.state = State.Clean;
 
     // Add to active observers
-    this.observers.push(observer);
+    this.observers.add(observer);
 
-    return (this.destroyObserver<T>).bind(
-      this,
-      this.observersCount++,
-      observer,
-    );
+    return (this.destroyObserver<T>).bind(this, observer);
+  }
+
+  /**
+   * Calls `callback` with the source's value whenever it changes. The
+   * subscription keeps the source alive until the returned cleanup is
+   * called.
+   */
+  observe<T>(source: ReadableSource<T>, callback: (value: T) => void): Cleanup {
+    return this.addObserver(new ObserverNode(source, callback, false));
+  }
+
+  /**
+   * Like `observe`, except the subscription does not keep the source alive.
+   * The source is released once nothing else tracks it, as if this observer
+   * were not there, and the observer ends with it. Removing a weak observer
+   * never releases anything.
+   */
+  observeWeak<T>(
+    source: ReadableSource<T>,
+    callback: (value: T) => void,
+  ): Cleanup {
+    return this.addObserver(new ObserverNode(source, callback, true));
   }
 
   getAction<T, R>(action: Action<T, R>): NormalAction<T, R> {
@@ -336,6 +449,13 @@ export class ReactiveDomain {
 class TrackerContextInternal {
   alive = true;
 
+  /**
+   * Whether reads are recorded as dependencies. Only the synchronous part of
+   * a computation is tracked: reads after an `await` happen once the run has
+   * finished, so they are plain reads.
+   */
+  tracking = true;
+
   constructor(
     public domain: ReactiveDomain,
     public tracker: Tracker,
@@ -343,7 +463,7 @@ class TrackerContextInternal {
 
   readAtom<T>(source: Atom<T>): T {
     const instance = this.domain.getAtom(source);
-    if (this.alive) {
+    if (this.alive && this.tracking) {
       trackNode(this.tracker, instance);
     }
     return instance.value;
@@ -351,16 +471,16 @@ class TrackerContextInternal {
 
   readLazyAtom<T>(source: LazyAtom<T>): T {
     const instance = this.domain.getLazyAtom(source);
-    if (this.alive) {
+    if (this.alive && this.tracking) {
       trackNode(this.tracker, instance);
     }
     return instance.value;
   }
 
-  readComputed<T>(source: Computed<T>): T {
-    const instance = this.domain.getComputed(source);
+  readComputed<T>(source: DerivedSource<T>): T {
+    const instance = this.domain.getDerived(source);
     revalidateComputed(this.domain, instance);
-    if (this.alive) {
+    if (this.alive && this.tracking) {
       trackNode(this.tracker, instance);
     }
     return readComputed(instance);
@@ -370,10 +490,12 @@ class TrackerContextInternal {
     switch (source.type) {
       case NodeType.Atom:
         return this.readAtom(source);
-      case NodeType.Computed:
-        return this.readComputed(source);
       case NodeType.LazyAtom:
         return this.readLazyAtom(source);
+      case NodeType.Computed:
+      case NodeType.Proxy:
+      case NodeType.Resource:
+        return this.readComputed(source);
     }
   }
 
@@ -436,7 +558,11 @@ class Tracker {
   trackables: Set<Trackable> | undefined;
   context: TrackerContextInternal | undefined = undefined;
 
-  constructor(public parent: TrackerNode<any>) {}
+  constructor(
+    public parent: TrackerNode<any>,
+    /** A weak tracker does not keep what it tracks alive. */
+    public weak = false,
+  ) {}
 }
 
 class AtomNode<T> {
@@ -463,12 +589,14 @@ class LazyAtomNode<T> {
   }
 }
 
-type SuccessResult<T> = { type: ComputedState.Success; value: T };
-
 type ComputedResult<T> =
-  | SuccessResult<T>
+  | { type: ComputedState.Pending; value: Promise<T> }
+  | { type: ComputedState.Success; value: T }
   | { type: ComputedState.Failure; value: unknown };
 
+/**
+ * The node behind every derived source: computeds, proxy atoms and resources.
+ */
 class ComputedNode<T> {
   type: NodeType.Computed = NodeType.Computed;
 
@@ -480,7 +608,12 @@ class ComputedNode<T> {
 
   prev: Ref<T> | undefined;
 
-  constructor(public source: Computed<T>) {}
+  /**
+   * Counts the runs, so a resource only accepts the result of its latest one.
+   */
+  run = 0;
+
+  constructor(public source: DerivedSource<T>) {}
 }
 
 export type BaseOptions = {
@@ -488,15 +621,19 @@ export type BaseOptions = {
 };
 
 class ObserverNode<T> {
-  type: NodeType.Observer = NodeType.Observer;
+  type: NodeType.Observer | NodeType.WeakObserver;
 
-  tracker = new Tracker(this);
+  tracker: Tracker;
 
   constructor(
     public source: ReadableSource<T>,
     public compute: (value: T) => void,
+    weak: boolean,
     public options?: BaseOptions,
-  ) {}
+  ) {
+    this.type = weak ? NodeType.WeakObserver : NodeType.Observer;
+    this.tracker = new Tracker(this, weak);
+  }
 }
 
 function addTrackable(node: Tracker, trackable: Trackable): void {
@@ -513,7 +650,11 @@ function addTracker(node: Trackable, tracker: Tracker): void {
   node.trackers.add(tracker);
 }
 
-function cleanTrackers(node: Trackable): void {
+/**
+ * Detaches every tracker from a trackable that is going away. Observers of it
+ * end, since there is nothing left for them to observe.
+ */
+function cleanTrackers(domain: ReactiveDomain, node: Trackable): void {
   if (!(node.trackers && node.trackers.size)) {
     return;
   }
@@ -521,8 +662,23 @@ function cleanTrackers(node: Trackable): void {
     if (tracker.trackables) {
       tracker.trackables.delete(node);
     }
+    if (tracker.parent.type !== NodeType.Computed) {
+      domain.forgetObserver(tracker.parent);
+      destroyTracker(domain, tracker);
+    }
   }
   node.trackers.clear();
+}
+
+function hasStrongTracker(node: Trackable): boolean {
+  if (node.trackers) {
+    for (const tracker of node.trackers) {
+      if (!tracker.weak) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function releaseTrackable(
@@ -535,8 +691,9 @@ function releaseTrackable(
   }
   trackable.trackers.delete(node);
 
-  // If there's 0 trackers, might as well destroy the node
-  if (trackable.alive && trackable.trackers.size === 0) {
+  // Once nothing keeps it alive, might as well destroy the node. Weak
+  // trackers do not count, and letting go of one never releases anything.
+  if (!node.weak && trackable.alive && !hasStrongTracker(trackable)) {
     switch (trackable.parent.type) {
       case NodeType.Atom:
         domain.destroyAtom(trackable.parent.source);
@@ -583,10 +740,10 @@ function releaseUnusedTrackables(
   }
 }
 
-function destroyTrackable(instance: Trackable): void {
+function destroyTrackable(domain: ReactiveDomain, instance: Trackable): void {
   if (instance.alive) {
     instance.alive = false;
-    cleanTrackers(instance);
+    cleanTrackers(domain, instance);
   }
 }
 
@@ -600,15 +757,18 @@ function destroyTracker(domain: ReactiveDomain, instance: Tracker): void {
   }
 }
 
-function destroyAtomNode<T>(node: AtomNode<T> | LazyAtomNode<T>): void {
-  destroyTrackable(node.trackable);
+function destroyAtomNode<T>(
+  domain: ReactiveDomain,
+  node: AtomNode<T> | LazyAtomNode<T>,
+): void {
+  destroyTrackable(domain, node.trackable);
 }
 function destroyComputedNode<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
 ): void {
   destroyTracker(domain, node.tracker);
-  destroyTrackable(node.trackable);
+  destroyTrackable(domain, node.trackable);
 }
 function destroyObserverNode<T>(
   domain: ReactiveDomain,
@@ -744,6 +904,16 @@ function writeComputedFailure<T>(
   domain.onUpdate(node.source);
 }
 
+function writeComputedPending<T>(
+  domain: ReactiveDomain,
+  node: ComputedNode<T>,
+  request: Promise<T>,
+): void {
+  node.state = { type: ComputedState.Pending, value: request };
+  writeTrackable(domain, node.trackable, true);
+  domain.onUpdate(node.source);
+}
+
 function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
   addTrackable(tracker, node.trackable);
   addTracker(node.trackable, tracker);
@@ -772,6 +942,8 @@ function readComputed<T>(node: ComputedNode<T>): T {
       // ...otherwise, rethrow the error.
       throw node.state.value;
     }
+    // A pending resource halts the reader, handing it the promise to wait on.
+    throw new ResourceNotReadyError(node.state.value);
   }
   // This shouldn't happen at all
   throw new Error('Node is uninitialized.');
@@ -802,6 +974,40 @@ function updateTrackerContext<T>(
   return createTrackerContext(node.context, previous);
 }
 
+function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+/**
+ * Settles a resource with the outcome of its run, unless a newer run has
+ * started or the node is gone by then.
+ */
+function settleResource<T>(
+  domain: ReactiveDomain,
+  node: ComputedNode<T>,
+  run: number,
+  request: PromiseLike<T>,
+): void {
+  const isCurrent = (): boolean =>
+    node.run === run && node.trackable.alive && node.tracker.alive;
+  request.then(
+    value => {
+      if (isCurrent()) {
+        writeComputedSuccess(domain, node, value);
+      }
+    },
+    (error: unknown) => {
+      if (isCurrent()) {
+        writeComputedFailure(domain, node, error);
+      }
+    },
+  );
+}
+
 function updateComputed<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
@@ -815,25 +1021,39 @@ function updateComputed<T>(
   // Mark this node clean
   node.tracker.state = State.Clean;
 
+  // A new run supersedes any promise an earlier run is still waiting on
+  const run = ++node.run;
+
   // Attempt to recompute
-  let result: ComputedResult<T>;
+  let result:
+    | { type: ComputedState.Success; value: T | PromiseLike<T> }
+    | { type: ComputedState.Failure; value: unknown };
+  const context = updateTrackerContext(domain, node.tracker, node.prev);
   node.tracker.running = true;
   try {
     result = {
       type: ComputedState.Success,
-      value: node.source.compute(
-        updateTrackerContext(domain, node.tracker, node.prev),
-      ),
+      value: node.source.compute(context),
     };
   } catch (error) {
     result = { type: ComputedState.Failure, value: error };
   } finally {
     node.tracker.running = false;
+    if (node.tracker.context) {
+      node.tracker.context.tracking = false;
+    }
   }
-  if (result.type === ComputedState.Success) {
-    writeComputedSuccess(domain, node, result.value);
-  } else {
+  if (result.type === ComputedState.Failure) {
     writeComputedFailure(domain, node, result.value);
+  } else if (
+    node.source.type === NodeType.Resource &&
+    isPromiseLike<T>(result.value)
+  ) {
+    const request = Promise.resolve(result.value);
+    writeComputedPending(domain, node, request);
+    settleResource(domain, node, run, request);
+  } else {
+    writeComputedSuccess(domain, node, result.value as T);
   }
 
   releaseUnusedTrackables(domain, node.tracker, previous);
@@ -849,7 +1069,10 @@ function updateObserver<T>(
   try {
     value = domain.get(node.source);
   } catch (error) {
-    handleError(domain, error, node.options);
+    // A pending resource is not an error. The observer runs once it settles.
+    if (!(error instanceof ResourceNotReadyError)) {
+      handleError(domain, error, node.options);
+    }
     return;
   } finally {
     node.tracker.running = false;
@@ -917,15 +1140,18 @@ export function action<T, R>(callback: Action<T, R>) {
   return callback;
 }
 
+function createActionContext(domain: ReactiveDomain): ActionContext {
+  return {
+    get: domain.get.bind(domain),
+    set: domain.set.bind(domain),
+    reset: domain.reset.bind(domain),
+  };
+}
+
 function bindAction<T, R>(
   this: ReactiveDomain,
   action: Action<T, R>,
   value: T,
 ): R {
-  const context: ActionContext = {
-    get: this.get.bind(this),
-    set: this.set.bind(this),
-    reset: this.reset.bind(this),
-  };
-  return action(context, value);
+  return action(createActionContext(this), value);
 }
