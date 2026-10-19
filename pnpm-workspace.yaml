@@ -1,3 +1,14 @@
 packages:
   - 'packages/**/*'
   - 'examples/**/*'
+  - 'website'
+
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+strictPeerDependencies: false
+
+# pnpm fails the install when a dependency has a build script nobody has ruled
+# on. esbuild's only verifies its native binary, which arrives through a
+# platform package anyway, so Vite works without running it.
+allowBuilds:
+  esbuild: false

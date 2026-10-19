@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Fine-grained reactive state with lazy computeds. Atoms describe values, a ReactiveDomain holds them, and only what something reads ever reruns."
+    />
+    <title>atemno</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Sets the color theme before the page paints, so a saved choice does not flash the other theme first. -->
+    <script>
+      try {
+        var theme = localStorage.getItem('theme');
+        if (theme) document.documentElement.dataset.theme = theme;
+      } catch (error) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
