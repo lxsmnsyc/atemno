@@ -309,9 +309,11 @@ const todoLabel = computedFactory('todoLabel', {
 });
 ```
 
-Names are namespaced as `<factory name>/<key>`, so they stay unique. Once the
-cache is full, the least recently used instance is dropped. Asking for that key
-again builds a new instance with fresh initial state.
+Names are namespaced as `<factory name>/<key>`, so they stay unique. The cache
+only holds descriptions. Once it is full, the least recently used description is
+dropped, which forgets the object and not any state. A domain finds nodes by
+name, so asking for that key again builds a new description with the same name,
+and a domain that still holds the node returns its current value through it.
 
 ### Node lifecycle
 
