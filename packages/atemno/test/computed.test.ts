@@ -181,14 +181,16 @@ describe('computed', () => {
     expect(domain.get(guarded)).toBe('ok');
   });
 
-  it('forces a recomputation on reset', () => {
+  it('reruns on the next read after a reset', () => {
     const domain = createDomain();
     const compute = vi.fn(() => 'value');
     const constant = computed('constant', compute);
 
     domain.get(constant);
     domain.reset(constant);
+    expect(compute).toHaveBeenCalledTimes(1);
 
+    domain.get(constant);
     expect(compute).toHaveBeenCalledTimes(2);
   });
 
