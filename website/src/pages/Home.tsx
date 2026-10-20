@@ -154,13 +154,13 @@ export default function Home(): JSX.Element {
           A framework agnostic core, with <strong>React</strong> bindings
         </p>
         <h1 class="hero-title">
-          State that only does{' '}
-          <span class="gradient-text">the work you read.</span>
+          State that recomputes{' '}
+          <span class="gradient-text">only what you read.</span>
         </h1>
         <p class="hero-lead">
-          Atoms and computeds describe values. A domain holds them, tracks
-          exactly what each computed read, and reruns only what something is
-          reading. Write a hundred times and nobody pays until somebody looks.
+          Atoms and computeds describe values. A domain stores them and records
+          what each computed reads. A write only marks what depends on it, and a
+          computed reruns when something reads it.
         </p>
         <div class="hero-actions">
           <a class="button button-primary" href={FIRST_PAGE.href}>
@@ -191,10 +191,10 @@ export default function Home(): JSX.Element {
 
       <section class="section">
         <div class="section-heading">
-          <h2>Run at build time, shown as it ran</h2>
+          <h2>Examples and their output</h2>
           <p>
-            The output below came from running each example against atemno when
-            this page was built.
+            Each tab shows a short program and what it printed when run with
+            atemno.
           </p>
         </div>
         <Showcase />

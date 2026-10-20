@@ -129,7 +129,7 @@ export async function renderShowcase(root: string): Promise<ShowcaseExample[]> {
       id: example.id,
       label: example.label,
       description: example.description,
-      input: codeFrame(highlight(input, 'ts'), 'Input'),
+      input: codeFrame(highlight(input, 'ts'), 'Code'),
       output: codeFrame(
         `<pre class="twinkleplop console-output"><code>${lines
           .map(
@@ -137,7 +137,7 @@ export async function renderShowcase(root: string): Promise<ShowcaseExample[]> {
               `<span class="l">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</span>`,
           )
           .join('\n')}</code></pre>`,
-        'Console',
+        'Output',
       ),
     };
   });
