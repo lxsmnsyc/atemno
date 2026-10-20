@@ -23,21 +23,17 @@ The domain is built once and kept for the life of the component, so inline handl
 
 It is not destroyed on unmount. Unmounting drops every subscription the tree held, the domain releases its nodes in turn, and the domain becomes garbage. Destroying it would break `StrictMode`, which remounts a component with the same state.
 
-## Bringing your own domain
+## Starting state
 
-`AtemnoProvider` supplies a domain you built yourself, for example one per request on a server.
+`initialize` receives the new domain once, before anything below renders. Write the starting state there, such as data the server loaded for this request.
 
 ```tsx
-import { AtemnoProvider } from 'atemno/react';
-
-const domain = new ReactiveDomain({});
-
-<AtemnoProvider domain={domain}>
+<AtemnoDomain initialize={domain => domain.set(user, currentUser)}>
   <App />
-</AtemnoProvider>;
+</AtemnoDomain>
 ```
 
-Both components nest. Hooks use the nearest one, so a subtree can run against its own isolated state.
+`AtemnoDomain` nests. Hooks use the nearest one, so a subtree can run against its own isolated state.
 
 ## Reading
 

@@ -144,3 +144,21 @@ test('a resource shows its pending state and keeps only the latest request', asy
   await demo.getByRole('button', { name: 'Next user' }).click();
   await expect(status).toHaveText('No user 4', { timeout: 5000 });
 });
+
+test('a producer runs only while it is observed', async ({ page }) => {
+  await page.goto('/docs/producers');
+  const demo = page.locator('.demo').first();
+  const clock = demo.locator('[data-clock]');
+  const state = demo.locator('[data-state]');
+
+  await expect(clock).toHaveText('1s', { timeout: 3000 });
+  await demo.getByRole('button', { name: 'Stop observing' }).click();
+  await expect(state).toHaveText('Interval cleared');
+  const stopped = await clock.textContent();
+  await page.waitForTimeout(1500);
+  await expect(clock).toHaveText(stopped ?? '');
+
+  await demo.getByRole('button', { name: 'Observe' }).click();
+  await expect(clock).toHaveText('0s');
+  await expect(clock).toHaveText('1s', { timeout: 3000 });
+});

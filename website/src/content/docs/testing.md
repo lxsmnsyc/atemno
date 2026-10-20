@@ -57,4 +57,21 @@ const domain = new ReactiveDomain({
 
 ## React
 
-Wrap the component in `AtemnoProvider` with a domain the test owns, and assert on that domain directly.
+Render the component inside `AtemnoDomain`. Use `initialize` to write the starting state, and to keep the domain so the test can assert on it.
+
+```tsx
+let domain: ReactiveDomain | undefined;
+
+render(
+  <AtemnoDomain
+    initialize={created => {
+      created.set(count, 3);
+      domain = created;
+    }}
+  >
+    <Counter />
+  </AtemnoDomain>,
+);
+
+expect(domain?.get(count)).toBe(3);
+```

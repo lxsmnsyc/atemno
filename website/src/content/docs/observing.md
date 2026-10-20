@@ -44,6 +44,16 @@ const domain = new ReactiveDomain({
 });
 ```
 
+Pass `onError` to `observe` to handle one observer's errors yourself. It also receives errors from reading the source, such as a computed that throws.
+
+```ts
+domain.observe(cart, render, {
+  onError(error) {
+    showCartError(error);
+  },
+});
+```
+
 ## Weak observers
 
 `observeWeak` subscribes like `observe`, without keeping anything alive. The source is released once nothing else tracks it, as if the weak observer were not there, and the weak observer ends with it. Unsubscribing a weak observer never releases anything.
