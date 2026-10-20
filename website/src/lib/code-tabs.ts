@@ -17,10 +17,17 @@ export default function onCodeTabClick(event: MouseEvent): void {
     if (!group.querySelector(`[data-code-panel="${CSS.escape(label)}"]`)) {
       continue;
     }
-    for (const button of group.querySelectorAll<HTMLElement>('[data-code-tab]')) {
-      button.setAttribute('aria-pressed', String(button.dataset.codeTab === label));
+    for (const button of group.querySelectorAll<HTMLElement>(
+      '[data-code-tab]',
+    )) {
+      button.setAttribute(
+        'aria-pressed',
+        String(button.dataset.codeTab === label),
+      );
     }
-    for (const panel of group.querySelectorAll<HTMLElement>('[data-code-panel]')) {
+    for (const panel of group.querySelectorAll<HTMLElement>(
+      '[data-code-panel]',
+    )) {
       panel.hidden = panel.dataset.codePanel !== label;
     }
   }

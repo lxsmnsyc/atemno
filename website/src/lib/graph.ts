@@ -1,5 +1,11 @@
 import { ReactiveDomain } from 'atemno';
-import type { Atom, Cleanup, Computed, ReadableSource, TrackerContext } from 'atemno';
+import type {
+  Atom,
+  Cleanup,
+  Computed,
+  ReadableSource,
+  TrackerContext,
+} from 'atemno';
 import { createMemo, createSignal } from 'solid-js';
 
 /**
@@ -34,7 +40,15 @@ export interface GraphNode {
   observed: boolean;
 }
 
-export type LogKind = 'write' | 'run' | 'fail' | 'release' | 'create' | 'observe' | 'fire' | 'read';
+export type LogKind =
+  | 'write'
+  | 'run'
+  | 'fail'
+  | 'release'
+  | 'create'
+  | 'observe'
+  | 'fire'
+  | 'read';
 
 export interface LogEntry {
   id: number;
@@ -105,7 +119,9 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
-function isComputed(source: ReadableSource<unknown>): source is Computed<unknown> {
+function isComputed(
+  source: ReadableSource<unknown>,
+): source is Computed<unknown> {
   return 'compute' in source;
 }
 
@@ -158,7 +174,7 @@ export function createGraph(options: GraphOptions): Graph {
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      setVersion((value) => value + 1);
+      setVersion(value => value + 1);
     });
   }
 
@@ -202,7 +218,10 @@ export function createGraph(options: GraphOptions): Graph {
             const value = $.get(dependency);
             // After the read, so a dependency that ran because of it counts
             // as already seen.
-            seen.set(dependency.name, nodes.get(dependency.name)?.changedAt ?? 0);
+            seen.set(
+              dependency.name,
+              nodes.get(dependency.name)?.changedAt ?? 0,
+            );
             return value;
           },
         };
@@ -210,7 +229,11 @@ export function createGraph(options: GraphOptions): Graph {
           const value = original(traced);
           node.deps = [...deps];
           node.seen = seen;
-          if (node.failed || !node.hasValue || !source.isEqual(node.value, value)) {
+          if (
+            node.failed ||
+            !node.hasValue ||
+            !source.isEqual(node.value, value)
+          ) {
             node.changedAt = tick();
           }
           node.value = value;
@@ -225,7 +248,10 @@ export function createGraph(options: GraphOptions): Graph {
           node.failed = true;
           node.error = error;
           node.changedAt = tick();
-          record('fail', `${node.name} threw ${error instanceof Error ? error.message : String(error)}`);
+          record(
+            'fail',
+            `${node.name} threw ${error instanceof Error ? error.message : String(error)}`,
+          );
           throw error;
         } finally {
           schedule();
@@ -236,7 +262,10 @@ export function createGraph(options: GraphOptions): Graph {
 
   const domain = new ReactiveDomain({
     onError(error) {
-      record('fail', `observer threw ${error instanceof Error ? error.message : String(error)}`);
+      record(
+        'fail',
+        `observer threw ${error instanceof Error ? error.message : String(error)}`,
+      );
       schedule();
     },
     onCreate(source) {
@@ -309,12 +338,15 @@ export function createGraph(options: GraphOptions): Graph {
   function build(): GraphSnapshot {
     const cache = new Map<string, NodeStatus>();
     return {
-      nodes: [...nodes.values()].map((node) => {
+      nodes: [...nodes.values()].map(node => {
         let value = '';
         if (node.kind === 'atom') {
           value = node.alive ? formatValue(currentAtomValue(node)) : '';
         } else if (node.failed) {
-          value = node.error instanceof Error ? node.error.message : String(node.error);
+          value =
+            node.error instanceof Error
+              ? node.error.message
+              : String(node.error);
         } else if (node.hasValue) {
           value = formatValue(node.value);
         }
@@ -340,7 +372,7 @@ export function createGraph(options: GraphOptions): Graph {
       return;
     }
     const node = track(name);
-    const stop = domain.observe(node.source, (value) => {
+    const stop = domain.observe(node.source, value => {
       record('fire', `observer of ${name} saw ${formatValue(value)}`);
       schedule();
     });
@@ -393,7 +425,9 @@ export function createGraph(options: GraphOptions): Graph {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Atoms named here hold a T.
       const current = currentAtomValue(node) as T;
       const value =
-        typeof next === 'function' ? (next as (current: T) => T)(current) : (next as T);
+        typeof next === 'function'
+          ? (next as (current: T) => T)(current)
+          : (next as T);
       if (atom.isEqual(current, value)) {
         record('write', `${name} = ${formatValue(value)}, equal, so ignored`);
       } else {

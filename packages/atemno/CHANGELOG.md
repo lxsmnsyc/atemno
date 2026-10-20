@@ -25,7 +25,7 @@
 - b4b433b: The package entry point is now `atemno` instead of `atemno/core`.
 
   ```js
-  import { atom, computed, ReactiveDomain } from "atemno";
+  import { atom, computed, ReactiveDomain } from 'atemno';
   ```
 
   Type declarations now resolve. The `types` field pointed at
@@ -62,7 +62,7 @@
   so inline handlers are fine.
 
   ```jsx
-  <AtemnoDomain onError={(error) => console.error(error)}>
+  <AtemnoDomain onError={error => console.error(error)}>
     <App />
   </AtemnoDomain>
   ```

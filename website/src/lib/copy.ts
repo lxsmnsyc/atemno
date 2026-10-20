@@ -5,9 +5,13 @@
  */
 export default function onCopyClick(event: MouseEvent): void {
   const button =
-    event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-copy]') : null;
+    event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>('[data-copy]')
+      : null;
   const code =
-    button?.closest('.code-block')?.querySelector('.code-panel:not([hidden]) pre') ??
+    button
+      ?.closest('.code-block')
+      ?.querySelector('.code-panel:not([hidden]) pre') ??
     button?.closest('.code-block')?.querySelector('pre') ??
     button?.closest('.demo')?.querySelector('.demo-code pre');
   if (button && code) {
