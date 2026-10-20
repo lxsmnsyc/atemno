@@ -33,7 +33,7 @@ const resetCount = useResetSource(count);
 const bump = useAction(increment);
 ```
 
-`useResetSource` restores any source to its initial state, and forces a computed to rerun. `useAction` binds an action to the nearest domain, and the callback stays stable while the domain and the action do.
+`useResetSource` restores an atom to its initial value, and makes a computed, proxy atom or resource run again, such as to refetch a resource. `useAction` binds an action to the nearest domain, and the callback stays stable while the domain and the action do.
 
 ## Resources and Suspense
 

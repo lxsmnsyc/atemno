@@ -26,18 +26,18 @@ description: Every export of atemno and atemno/react.
 
 ## ReactiveDomain
 
-| Method                      | Description                                        |
-| --------------------------- | -------------------------------------------------- |
-| `get(source)`               | Reads any source, creating its node if needed.     |
-| `set(source, value)`        | Writes an atom, or passes a value to a proxy.      |
-| `reset(source)`             | Restores an initial value, or reruns a computed.   |
-| `observe(source, callback)` | Subscribes. Returns a function that unsubscribes.  |
-| `observeWeak(source, cb)`   | Subscribes without keeping the source alive.       |
-| `getAction(action)`         | Binds an action to this domain.                    |
-| `destroyAtom(source)`       | Releases one atom's node.                          |
-| `destroyLazyAtom(source)`   | Releases one lazy atom's node.                     |
-| `destroyComputed(source)`   | Releases a computed's, proxy's or resource's node. |
-| `destroy()`                 | Tears down the domain.                             |
+| Method                      | Description                                               |
+| --------------------------- | --------------------------------------------------------- |
+| `get(source)`               | Reads any source, creating its node if needed.            |
+| `set(source, value)`        | Writes an atom, or passes a value to a proxy.             |
+| `reset(source)`             | Restores an initial value, or makes a computed run again. |
+| `observe(source, callback)` | Subscribes. Returns a function that unsubscribes.         |
+| `observeWeak(source, cb)`   | Subscribes without keeping the source alive.              |
+| `getAction(action)`         | Binds an action to this domain.                           |
+| `destroyAtom(source)`       | Releases one atom's node.                                 |
+| `destroyLazyAtom(source)`   | Releases one lazy atom's node.                            |
+| `destroyComputed(source)`   | Releases a computed's, proxy's or resource's node.        |
+| `destroy()`                 | Tears down the domain.                                    |
 
 ## atemno/react
 

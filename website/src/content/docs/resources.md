@@ -79,6 +79,17 @@ const user = resource<User>('user', async $ => {
 });
 ```
 
+## Refetching
+
+`domain.reset(user)` runs a resource again without changing anything it reads. If something observes it, the new request starts straight away. In React, `useResetSource(user)` returns a callback that does the same.
+
+```tsx
+function Reload() {
+  const reload = useResetSource(user);
+  return <button onClick={reload}>Reload</button>;
+}
+```
+
 ## Downstream of a resource
 
 A computed that reads a pending resource throws the same `ResourceNotReadyError`, and so does anything reading that computed. When the resource settles, they rerun like after any other change.

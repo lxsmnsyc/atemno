@@ -64,7 +64,17 @@ const timer = computed<number>('timer', $ => {
 
 ## Forcing a rerun
 
-`domain.reset(double)` runs a computed again even if nothing it read has changed.
+`domain.reset(double)` runs a computed again even if nothing it read has changed. Use it when the computation reads something atemno does not track, such as the clock.
+
+```ts
+const now = computed<number>('now', () => Date.now());
+
+domain.reset(now);
+```
+
+- If something observes the computed, it reruns straight away, and readers are updated if the value changed.
+- Otherwise it is only marked stale, and reruns on its next read.
+- A computed this domain has not evaluated yet is left alone.
 
 ## Errors
 
