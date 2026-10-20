@@ -79,6 +79,23 @@ const user = resource<User>('user', async $ => {
 });
 ```
 
+## Keeping the previous value
+
+By default a resource that reruns is pending again, so anything reading it waits, and React shows the `Suspense` fallback. Pass `keepPrevious` to keep returning the last resolved value until the new one arrives.
+
+```ts
+const user = resource<User>('user', async $ => fetchUser($.get(userId)), {
+  keepPrevious: true,
+});
+```
+
+- The first run is still pending, since there is no value to keep yet.
+- `isRefreshing(user)` is true while a newer request is in flight. `isPending(user)` stays false, because reads succeed.
+- A rejection replaces the kept value. Reads then rethrow it, as usual.
+- Computeds reading the resource keep their value too, until the new one arrives.
+
+The third argument is either an equality check, as before, or an options object with `isEqual` and `keepPrevious`.
+
 ## Downstream of a resource
 
 A computed that reads a pending resource throws the same `ResourceNotReadyError`, and so does anything reading that computed. When the resource settles, they rerun like after any other change.
@@ -99,6 +116,7 @@ The helpers take sources and return a computed, which you read like any other: `
 | ---------------------- | ---------------------------------------------- | -------------------------------- | --------------------------------------- |
 | `toResult(source)`     | `{ type, value }` or `{ type, request }`       | never, it reports it             | never                                   |
 | `isPending(source)`    | whether the source is pending                  | never, it reports it             | never                                   |
+| `isRefreshing(source)` | whether a `keepPrevious` resource is rerunning | never, it reports it             | never                                   |
 | `waitForNone(sources)` | one result per source                          | never, it reports it             | never                                   |
 | `waitForAll(sources)`  | every value                                    | any is pending                   | an `AggregateError` if any failed       |
 | `waitForAny(sources)`  | the first value, in list order, that resolved  | none resolved and any is pending | an `AggregateError` if all failed       |

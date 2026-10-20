@@ -11,10 +11,11 @@ description: Every export of atemno and atemno/react.
 | `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first use.  |
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.   |
 | `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.  |
-| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.    |
+| `resource(name, compute, options?)`         | Describes a derived value that can be async.    |
 | `ResourceNotReadyError`                     | Thrown when reading a pending resource.         |
 | `toResult(source)`                          | A computed describing a read, never throwing.   |
 | `isPending(source)`                         | A computed telling whether it is pending.       |
+| `isRefreshing(source)`                      | A computed telling whether it is rerunning.     |
 | `waitForNone(sources)`                      | A computed with one result per source.          |
 | `waitForAll(sources)`                       | A computed with every value, once all resolved. |
 | `waitForAny(sources)`                       | A computed with the first value that resolved.  |

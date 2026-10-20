@@ -313,6 +313,9 @@ Only the reads made before the first `await` are tracked. Each run replaces the
 one before it, and the result of a replaced run is dropped. A computed reading a
 pending resource is pending too, and observers are only called once it settles.
 
+Pass `{ keepPrevious: true }` as the third argument to keep returning the last
+resolved value while a rerun is pending. `isRefreshing(user)` is true meanwhile.
+
 `toResult`, `isPending`, `waitForNone`, `waitForAll`, `waitForAny` and
 `waitForRace` take sources and return a computed that combines them, read like
 any other source:
@@ -432,9 +435,10 @@ every read of it is `unknown`.
 | `lazyAtom(name, getInitialValue, isEqual?)` | Describes a writable value built on first read.   |
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.     |
 | `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.    |
-| `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.      |
+| `resource(name, compute, options?)`         | Describes a derived value that can be async.      |
 | `ResourceNotReadyError`                     | Thrown when reading a pending resource.           |
 | `toResult(source)`, `isPending(source)`     | Computeds describing a read, never throwing.      |
+| `isRefreshing(source)`                      | Whether a `keepPrevious` resource is rerunning.   |
 | `waitForNone`, `waitForAll`                 | Computeds combining several sources.              |
 | `waitForAny`, `waitForRace`                 | Computeds taking the first of several sources.    |
 | `action(callback)`                          | Describes a set of reads and writes.              |
