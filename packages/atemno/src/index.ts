@@ -16,6 +16,7 @@ export type {
 } from './graph';
 export {
   isPending,
+  isRefreshing,
   toResult,
   waitForAll,
   waitForAny,
@@ -38,6 +39,7 @@ export type {
   Ref,
   Resource,
   ResourceComputation,
+  ResourceOptions,
   TrackerContext,
   WritableSource,
 } from './types';
