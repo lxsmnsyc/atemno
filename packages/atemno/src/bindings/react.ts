@@ -36,7 +36,8 @@ export type AtemnoNodeKind =
   | 'lazyAtom'
   | 'computed'
   | 'proxy'
-  | 'resource';
+  | 'resource'
+  | 'producer';
 
 export interface AtemnoNodeSnapshot {
   name: string;
@@ -85,6 +86,8 @@ function kindOf(source: ReadableSource<any>): AtemnoNodeKind {
       return 'resource';
     case NodeType.LazyAtom:
       return 'lazyAtom';
+    case NodeType.Producer:
+      return 'producer';
   }
 }
 
@@ -252,6 +255,11 @@ function ResourceNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
 }
 ResourceNodeElement.displayName = 'Resource';
 
+function ProducerNodeElement(_props: AtemnoNodeSnapshot): ReactNode {
+  return null;
+}
+ProducerNodeElement.displayName = 'Producer';
+
 const NODE_COMPONENTS: Record<
   AtemnoNodeKind,
   (props: AtemnoNodeSnapshot) => ReactNode
@@ -261,6 +269,7 @@ const NODE_COMPONENTS: Record<
   computed: ComputedNodeElement,
   proxy: ProxyAtomNodeElement,
   resource: ResourceNodeElement,
+  producer: ProducerNodeElement,
 };
 
 // ---------------------------------------------------------------------------
@@ -269,35 +278,17 @@ const NODE_COMPONENTS: Record<
 
 const DomainContext = createContext<ReactiveDomain | undefined>(undefined);
 
-export interface AtemnoProviderProps {
-  /**
-   * The domain that holds the state for this part of the tree.
-   */
-  domain: ReactiveDomain;
-  children?: ReactNode;
-}
-
-/**
- * Supplies a domain to the hooks below it.
- *
- * Use this directly to bring a domain you built yourself. Nesting is allowed,
- * and hooks use the nearest provider, which lets a subtree run against its own
- * isolated state.
- */
-export function AtemnoProvider(props: AtemnoProviderProps): ReactNode {
-  return createElement(
-    DomainContext.Provider,
-    { value: props.domain },
-    props.children,
-  );
-}
-
 export interface AtemnoDomainProps extends ReactiveDomainOptions {
   /**
    * Renders the domain's graph as elements, for the React developer tools.
    * Off by default, because it re-renders on every write.
    */
   devtools?: boolean;
+  /**
+   * Called once with the new domain, before anything below renders. Write the
+   * starting state here, such as data loaded on the server for this request.
+   */
+  initialize?: (domain: ReactiveDomain) => void;
   children?: ReactNode;
 }
 
@@ -345,6 +336,7 @@ export function AtemnoDomain(props: AtemnoDomainProps): ReactNode {
       },
     });
     registry.attach(domain);
+    props.initialize?.(domain);
     return { domain, registry };
   });
 
@@ -352,7 +344,11 @@ export function AtemnoDomain(props: AtemnoDomainProps): ReactNode {
     GraphContext.Provider,
     { value: handle.registry },
     props.devtools ? createElement(AtemnoGraph, null) : null,
-    createElement(AtemnoProvider, { domain: handle.domain }, props.children),
+    createElement(
+      DomainContext.Provider,
+      { value: handle.domain },
+      props.children,
+    ),
   );
 }
 
@@ -364,9 +360,7 @@ export function AtemnoDomain(props: AtemnoDomainProps): ReactNode {
 export function useAtemnoDomain(): ReactiveDomain {
   const domain = useContext(DomainContext);
   if (!domain) {
-    throw new Error(
-      'useAtemnoDomain requires an AtemnoDomain or AtemnoProvider above it.',
-    );
+    throw new Error('useAtemnoDomain requires an AtemnoDomain above it.');
   }
   return domain;
 }

@@ -170,6 +170,23 @@ const stop = domain.observe(message, onChange);
 source is released once nothing else tracks it, and the weak observer ends with
 it. Removing a weak observer never releases anything.
 
+Both take `{ onError }` as a third argument, to handle that observer's errors
+instead of the domain's `onError`.
+
+#### Batching writes
+
+Wrap several writes in `domain.batch` so observers are called once, with the
+end result. Reads inside the batch still see each write.
+
+```js
+domain.batch(() => {
+  domain.set(first, 'Grace');
+  domain.set(last, 'Hopper');
+});
+```
+
+Actions and writes to proxy atoms run in a batch already.
+
 ### Computeds
 
 A computed derives a value from other atoms and computeds. It receives a
@@ -229,6 +246,8 @@ const total = computed('total', $ => {
   return $.previous ? $.previous.value + next : next;
 });
 ```
+
+Use `$.peek(source)` to read a source without making it a dependency.
 
 #### Cleanups
 
@@ -341,7 +360,25 @@ boundIncrement(3); // 8
 ```
 
 An action context has `get`, `set`, and `reset`. It cannot track dependencies
-or register cleanups, because it is not reactive.
+or register cleanups, because it is not reactive. An action runs in a batch, so
+observers see its result once it returns.
+
+### Producers
+
+A producer is a read-only value fed from outside the domain. Its `setup` starts
+when the first computed or observer tracks it, and the function it returns runs
+once the node is released.
+
+```js
+import { producer } from 'atemno';
+
+const width = producer('width', 0, set => {
+  const update = () => set(window.innerWidth);
+  update();
+  window.addEventListener('resize', update);
+  return () => window.removeEventListener('resize', update);
+});
+```
 
 ### Factories
 
@@ -433,6 +470,7 @@ every read of it is `unknown`.
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.     |
 | `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.    |
 | `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.      |
+| `producer(name, initialValue, setup)`       | Describes a value fed from outside the domain.    |
 | `ResourceNotReadyError`                     | Thrown when reading a pending resource.           |
 | `toResult(source)`, `isPending(source)`     | Computeds describing a read, never throwing.      |
 | `waitForNone`, `waitForAll`                 | Computeds combining several sources.              |
@@ -451,6 +489,7 @@ every read of it is `unknown`.
 | `reset(source)`             | Restores an atom's initial value, or forces a computed to rerun. |
 | `observe(source, callback)` | Subscribes to changes. Returns a cleanup function.               |
 | `observeWeak(source, cb)`   | Subscribes without keeping the source alive.                     |
+| `batch(callback)`           | Holds observers back until the callback returns.                 |
 | `getAction(action)`         | Binds an action to this domain.                                  |
 | `destroyAtom(source)`       | Releases one atom's node.                                        |
 | `destroyLazyAtom(source)`   | Releases one lazy atom's node.                                   |
@@ -484,18 +523,15 @@ handlers are fine. The latest ones are always the ones called.
 It is not destroyed on unmount. Unmounting releases every subscription the tree
 held, the domain releases its nodes in turn, and the domain becomes garbage.
 
-To supply a domain you built yourself, use `AtemnoProvider` instead. Both
-components nest, and hooks use the nearest one, so a subtree can run against its
-own isolated state.
+Pass `initialize` to write the starting state. It receives the new domain once,
+before anything below renders, which suits data the server loaded for this
+request. `AtemnoDomain` nests, and hooks use the nearest one, so a subtree can
+run against its own isolated state.
 
 ```jsx
-import { AtemnoProvider } from 'atemno/react';
-
-const domain = new ReactiveDomain({});
-
-<AtemnoProvider domain={domain}>
+<AtemnoDomain initialize={domain => domain.set(user, currentUser)}>
   <App />
-</AtemnoProvider>;
+</AtemnoDomain>
 ```
 
 ### Reading and writing
@@ -623,7 +659,6 @@ pnpm --filter atemno-example-react run dev
 | Export                     | Description                                            |
 | -------------------------- | ------------------------------------------------------ |
 | `AtemnoDomain`             | Builds a domain, supplies it, and tracks its graph.    |
-| `AtemnoProvider`           | Supplies a domain you built yourself.                  |
 | `AtemnoGraph`              | Renders the graph as elements for the developer tools. |
 | `useAtemnoDomain()`        | Returns the nearest domain.                            |
 | `useAtomValue(source)`     | Reads an atom, lazy atom or proxy atom.                |

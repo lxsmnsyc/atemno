@@ -8,7 +8,6 @@ import type { AtemnoNodeSnapshot } from '../src/bindings/react';
 import {
   AtemnoDomain,
   AtemnoGraph,
-  AtemnoProvider,
   useAction,
   useAtemnoDomain,
   useAtomState,
@@ -38,42 +37,65 @@ function render(ui: ReactNode, strict = false): void {
   });
 }
 
-describe('AtemnoProvider', () => {
-  it('supplies an externally built domain', () => {
-    const count = atom('count', 3);
-    const domain = new ReactiveDomain({});
+describe('AtemnoDomain initialize', () => {
+  it('writes the starting state before anything renders', () => {
+    const count = atom('count', 0);
+    const renders: number[] = [];
 
     function Show() {
-      return <span>{useAtomValue(count)}</span>;
+      const value = useAtomValue(count);
+      renders.push(value);
+      return <span>{value}</span>;
     }
 
     render(
-      <AtemnoProvider domain={domain}>
+      <AtemnoDomain initialize={domain => domain.set(count, 3)}>
         <Show />
-      </AtemnoProvider>,
+      </AtemnoDomain>,
     );
 
     expect(host.textContent).toBe('3');
+    expect(renders).toEqual([3]);
   });
 
-  it('lets a nested provider use its own domain', () => {
+  it('runs once, not on every render', () => {
     const count = atom('count', 0);
-    const outer = new ReactiveDomain({});
-    const inner = new ReactiveDomain({});
-    outer.set(count, 1);
-    inner.set(count, 2);
+    const initialize = vi.fn((domain: ReactiveDomain) => domain.set(count, 1));
+    let setCount: ((value: number) => void) | undefined;
+
+    function Show() {
+      const [value, setValue] = useAtomState(count);
+      setCount = setValue;
+      return <span>{value}</span>;
+    }
+
+    render(
+      <AtemnoDomain initialize={initialize}>
+        <Show />
+      </AtemnoDomain>,
+    );
+    act(() => {
+      setCount?.(5);
+    });
+
+    expect(host.textContent).toBe('5');
+    expect(initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives a nested domain its own state', () => {
+    const count = atom('count', 0);
 
     function Show({ id }: { id: string }) {
       return <span id={id}>{useAtomValue(count)}</span>;
     }
 
     render(
-      <AtemnoProvider domain={outer}>
+      <AtemnoDomain initialize={domain => domain.set(count, 1)}>
         <Show id="outer" />
-        <AtemnoProvider domain={inner}>
+        <AtemnoDomain initialize={domain => domain.set(count, 2)}>
           <Show id="inner" />
-        </AtemnoProvider>
-      </AtemnoProvider>,
+        </AtemnoDomain>
+      </AtemnoDomain>,
     );
 
     expect(host.querySelector('#outer')?.textContent).toBe('1');
@@ -288,14 +310,9 @@ describe('AtemnoGraph', () => {
   });
 
   it('throws without an AtemnoDomain above it', () => {
-    const domain = new ReactiveDomain({});
-    expect(() =>
-      renderToStaticMarkup(
-        <AtemnoProvider domain={domain}>
-          <AtemnoGraph />
-        </AtemnoProvider>,
-      ),
-    ).toThrow('useAtemnoGraph requires an AtemnoDomain above it.');
+    expect(() => renderToStaticMarkup(<AtemnoGraph />)).toThrow(
+      'useAtemnoGraph requires an AtemnoDomain above it.',
+    );
   });
 });
 
@@ -725,7 +742,7 @@ describe('hooks without a provider', () => {
     }
 
     expect(() => renderToStaticMarkup(<Show />)).toThrow(
-      'useAtemnoDomain requires an AtemnoDomain or AtemnoProvider above it.',
+      'useAtemnoDomain requires an AtemnoDomain above it.',
     );
   });
 });

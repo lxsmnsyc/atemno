@@ -74,6 +74,7 @@ const KIND_NAMES: Record<ReadableSource<any>['type'], string> = {
   [NodeType.Computed]: 'computed',
   [NodeType.Proxy]: 'proxy',
   [NodeType.Resource]: 'resource',
+  [NodeType.Producer]: 'producer',
 };
 
 // The helpers build a computed per combination of sources. Its name is made

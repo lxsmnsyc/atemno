@@ -61,8 +61,8 @@ describe('proxy', () => {
 
     domain.set(full, 'Grace Hopper');
 
-    // The write sets two atoms, and observers see each step.
-    expect(seen).toEqual(['Grace Lovelace', 'Grace Hopper']);
+    // The write sets two atoms in one batch, so observers see the result once.
+    expect(seen).toEqual(['Grace Hopper']);
   });
 
   it('can be written from a computation or an action', () => {

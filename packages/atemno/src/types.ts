@@ -92,6 +92,23 @@ export interface Resource<T> {
   isEqual: IsEqual<T>;
 }
 
+/**
+ * Starts feeding a producer from an outside source. Call `set` with each new
+ * value, and return a function that stops the feed.
+ */
+export type ProducerSetup<T> = (
+  set: (value: T) => void,
+  get: () => T,
+) => Cleanup | void;
+
+export interface Producer<T> {
+  type: NodeType.Producer;
+  name: string;
+  initialValue: T;
+  setup: ProducerSetup<T>;
+  isEqual: IsEqual<T>;
+}
+
 /** The sources a domain evaluates from other sources. */
 export type DerivedSource<T> = Computed<T> | ProxyAtom<T> | Resource<T>;
 
@@ -100,7 +117,8 @@ export type ReadableSource<T> =
   | Computed<T>
   | LazyAtom<T>
   | ProxyAtom<T>
-  | Resource<T>;
+  | Resource<T>
+  | Producer<T>;
 export type WritableSource<T> = Atom<T> | LazyAtom<T> | ProxyAtom<T>;
 
 export interface ActionContext {
@@ -110,6 +128,8 @@ export interface ActionContext {
 }
 
 export interface TrackerContext<T> extends ActionContext {
+  /** Reads a source without making it a dependency. */
+  peek<V>(source: ReadableSource<V>): V;
   onCleanup(cleanup: Cleanup): void;
   previous: Ref<T> | undefined;
 }

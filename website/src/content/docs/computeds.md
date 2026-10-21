@@ -34,6 +34,7 @@ Writing to `count` marks `double` stale. It does not run it. `double` reruns on 
 | Member               | Does                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | `$.get(source)`      | Reads a source and records it as a dependency.                               |
+| `$.peek(source)`     | Reads a source without making it a dependency.                               |
 | `$.set(atom, value)` | Writes an atom.                                                              |
 | `$.reset(source)`    | Resets a source.                                                             |
 | `$.onCleanup(fn)`    | Registers work to run before the next run.                                   |

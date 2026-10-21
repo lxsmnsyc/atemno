@@ -3,6 +3,7 @@ export {
   atom,
   computed,
   lazyAtom,
+  producer,
   proxy,
   ReactiveDomain,
   resource,
@@ -11,6 +12,7 @@ export {
 export type {
   Action,
   NormalAction,
+  ObserveOptions,
   ProxyAtomOptions,
   ReactiveDomainOptions,
 } from './graph';
@@ -32,6 +34,8 @@ export type {
   DerivedSource,
   IsEqual,
   LazyAtom,
+  Producer,
+  ProducerSetup,
   ProxyAtom,
   ProxyWrite,
   ReadableSource,
