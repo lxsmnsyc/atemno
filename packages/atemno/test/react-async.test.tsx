@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AtemnoNodeSnapshot } from '../src/bindings/react';
 import {
   AtemnoDomain,
-  AtemnoProvider,
   useAtemnoDomain,
   useAtemnoGraph,
   useAtomState,
@@ -194,7 +193,7 @@ describe('useAtomState with a proxy atom', () => {
       },
     });
     let setFahrenheit: ((value: number) => void) | undefined;
-    const domain = new ReactiveDomain({});
+    let domain: ReactiveDomain | undefined;
 
     function Show() {
       const [value, setValue] = useAtomState(fahrenheit);
@@ -203,9 +202,13 @@ describe('useAtomState with a proxy atom', () => {
     }
 
     await render(
-      <AtemnoProvider domain={domain}>
+      <AtemnoDomain
+        initialize={created => {
+          domain = created;
+        }}
+      >
         <Show />
-      </AtemnoProvider>,
+      </AtemnoDomain>,
     );
     expect(host.textContent).toBe('212');
 
@@ -214,7 +217,7 @@ describe('useAtomState with a proxy atom', () => {
     });
 
     expect(host.textContent).toBe('32');
-    expect(domain.get(celsius)).toBe(0);
+    expect(domain?.get(celsius)).toBe(0);
   });
 });
 

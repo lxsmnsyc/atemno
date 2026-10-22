@@ -32,6 +32,23 @@ A computed that reruns and returns a value equal to its last one does not count 
 
 Equality uses the computed's `isEqual`, which defaults to strict equality with `NaN` equal to itself. Pass a third argument to `computed` for a looser check.
 
+## Batching writes
+
+Each write runs the observers it affects before `set` returns. To write several sources and have observers see only the end result, wrap the writes in `domain.batch`.
+
+```ts
+domain.batch(() => {
+  domain.set(first, 'Grace');
+  domain.set(last, 'Hopper');
+});
+// Observers of `fullName` are called once, with "Grace Hopper".
+```
+
+- Reads inside the batch see each write straight away. Only observers wait.
+- Batches nest. Observers run when the outermost batch ends, even if it throws.
+- An observer whose value ends where it started is not called.
+- [Actions](./actions.md) and writes to [proxy atoms](./proxy-atoms.md) run in a batch already.
+
 ## Reading the graph
 
 The [explorer](/explorer) has these scenarios and two more, with a log of every write, run and release.

@@ -40,7 +40,7 @@ Unlike an atom, a write does not compare the value first. `set` always runs, and
 
 ## One write, several steps
 
-When `set` writes several atoms, each write takes effect as it happens, the same as in an action. An observer of the proxy can see the value between the writes.
+When `set` writes several atoms, they are written in one [batch](./propagation.md#batching-writes), the same as in an action. Observers of the proxy are called once, with the value after every write.
 
 ```ts
 const fullName = proxy<string>('fullName', {
@@ -54,7 +54,7 @@ const fullName = proxy<string>('fullName', {
 
 domain.observe(fullName, console.log);
 domain.set(fullName, 'Grace Hopper');
-// "Grace Lovelace", then "Grace Hopper"
+// "Grace Hopper"
 ```
 
 ## Names and lifetime

@@ -12,6 +12,7 @@ description: Every export of atemno and atemno/react.
 | `computed(name, compute, isEqual?)`         | Describes a value derived from other sources.   |
 | `proxy(name, { get, set, isEqual? })`       | Describes a derived value that can be written.  |
 | `resource(name, compute, isEqual?)`         | Describes a derived value that can be async.    |
+| `producer(name, initialValue, setup)`       | Describes a value fed from outside the domain.  |
 | `ResourceNotReadyError`                     | Thrown when reading a pending resource.         |
 | `toResult(source)`                          | A computed describing a read, never throwing.   |
 | `isPending(source)`                         | A computed telling whether it is pending.       |
@@ -33,6 +34,7 @@ description: Every export of atemno and atemno/react.
 | `reset(source)`             | Restores an initial value, or makes a computed run again. |
 | `observe(source, callback)` | Subscribes. Returns a function that unsubscribes.         |
 | `observeWeak(source, cb)`   | Subscribes without keeping the source alive.              |
+| `batch(callback)`           | Holds observers back until the callback returns.          |
 | `getAction(action)`         | Binds an action to this domain.                           |
 | `destroyAtom(source)`       | Releases one atom's node.                                 |
 | `destroyLazyAtom(source)`   | Releases one lazy atom's node.                            |
@@ -44,7 +46,6 @@ description: Every export of atemno and atemno/react.
 | Export                     | Description                                         |
 | -------------------------- | --------------------------------------------------- |
 | `AtemnoDomain`             | Builds a domain, supplies it, and tracks its graph. |
-| `AtemnoProvider`           | Supplies a domain you built yourself.               |
 | `AtemnoGraph`              | Renders the graph as elements for React DevTools.   |
 | `useAtemnoDomain()`        | Returns the nearest domain.                         |
 | `useAtomValue(source)`     | Reads an atom, lazy atom or proxy atom.             |

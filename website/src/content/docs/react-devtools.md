@@ -11,7 +11,7 @@ description: Set devtools on AtemnoDomain and every live node shows up in React 
 </AtemnoDomain>
 ```
 
-`AtemnoDomain` then renders one element per live node. The elements draw nothing. They exist so the state shows up in React DevTools as `Atom`, `LazyAtom`, `Computed`, `ProxyAtom` and `Resource` entries, with each node's name and value on its props.
+`AtemnoDomain` then renders one element per live node. The elements draw nothing. They exist so the state shows up in React DevTools as `Atom`, `LazyAtom`, `Computed`, `ProxyAtom`, `Resource` and `Producer` entries, with each node's name and value on its props.
 
 It is off by default, because it rerenders on every write.
 

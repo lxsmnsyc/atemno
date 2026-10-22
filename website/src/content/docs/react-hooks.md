@@ -60,4 +60,4 @@ The atom hooks accept [proxy atoms](./proxy-atoms.md), since a proxy atom is wri
 
 ## The domain itself
 
-`useAtemnoDomain()` returns the nearest domain, for anything the hooks do not cover. It throws if there is no `AtemnoDomain` or `AtemnoProvider` above it.
+`useAtemnoDomain()` returns the nearest domain, for anything the hooks do not cover. It throws if there is no `AtemnoDomain` above it.
