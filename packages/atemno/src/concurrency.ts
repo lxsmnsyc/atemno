@@ -1,4 +1,4 @@
-import { computed, ResourceNotReadyError } from './graph';
+import { computed, getContextDomain, ResourceNotReadyError } from './graph';
 import { LRUMap } from './lru';
 import type {
   Computed,
@@ -164,6 +164,24 @@ export function isPending(source: ReadableSource<any>): Computed<boolean> {
     'isPending',
     [source],
     $ => readResult(() => $.get(source)).type === 'pending',
+    Object.is,
+  );
+}
+
+/**
+ * A computed that is true while a resource created with `keepPrevious` reruns.
+ * Reads of the resource return its previous value meanwhile, so `isPending`
+ * stays false.
+ */
+export function isRefreshing(source: ReadableSource<any>): Computed<boolean> {
+  return describe<boolean>(
+    'isRefreshing',
+    [source],
+    $ => {
+      // Reading tracks the source, so this reruns when its state changes.
+      readResult(() => $.get(source));
+      return getContextDomain($).isRefreshing(source);
+    },
     Object.is,
   );
 }

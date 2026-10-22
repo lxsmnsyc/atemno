@@ -85,11 +85,21 @@ export interface ProxyAtom<T> {
  */
 export type ResourceComputation<T> = ($: TrackerContext<T>) => T | Promise<T>;
 
+export interface ResourceOptions<T> {
+  isEqual?: IsEqual<T>;
+  /**
+   * While a rerun is pending, reads return the last resolved value instead of
+   * throwing a `ResourceNotReadyError`. The first run is still pending.
+   */
+  keepPrevious?: boolean;
+}
+
 export interface Resource<T> {
   type: NodeType.Resource;
   name: string;
   compute: ResourceComputation<T>;
   isEqual: IsEqual<T>;
+  keepPrevious: boolean;
 }
 
 /**

@@ -54,6 +54,22 @@ function Profile() {
 
 When a dependency changes, the resource runs again and the component suspends again. React 19 waits on the request with `use`. React 18 waits on the thrown promise.
 
+To keep the current content on screen while it reruns, create the resource with `keepPrevious`. Show a smaller loading state with `isRefreshing`.
+
+```tsx
+const user = resource<User>('user', async $ => fetchUser($.get(userId)), {
+  keepPrevious: true,
+});
+
+function Profile() {
+  const name = useComputedValue(user);
+  const refreshing = useComputedValue(isRefreshing(user));
+  return <h1 aria-busy={refreshing}>{name}</h1>;
+}
+```
+
+React transitions do not help here. The hooks read through `useSyncExternalStore`, and React turns a store update inside `startTransition` into a blocking one, so the fallback still shows.
+
 ## Proxy atoms
 
 The atom hooks accept [proxy atoms](./proxy-atoms.md), since a proxy atom is writable. `useAtomState(fahrenheit)` returns the derived value and a setter that writes through the proxy.
