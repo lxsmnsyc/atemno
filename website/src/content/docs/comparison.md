@@ -117,16 +117,13 @@ Here is state for one server request, seeded with the signed-in user:
 :::code-group
 
 ```tsx title="atemno"
-import { ReactiveDomain } from 'atemno';
-import { AtemnoProvider } from 'atemno/react';
+import { AtemnoDomain } from 'atemno/react';
 
 function renderPage(user: User) {
-  const domain = new ReactiveDomain({});
-  domain.set(currentUser, user);
   return (
-    <AtemnoProvider domain={domain}>
+    <AtemnoDomain initialize={domain => domain.set(currentUser, user)}>
       <Page />
-    </AtemnoProvider>
+    </AtemnoDomain>
   );
 }
 ```

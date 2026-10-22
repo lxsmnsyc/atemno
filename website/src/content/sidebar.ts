@@ -20,6 +20,7 @@ export const SIDEBAR: SidebarSection[] = [
       'computeds',
       'proxy-atoms',
       'resources',
+      'producers',
       'propagation',
       'dynamic-dependencies',
       'errors',

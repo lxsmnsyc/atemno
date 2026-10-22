@@ -14,6 +14,7 @@ describe('public entry point', () => {
       'isPending',
       'isRefreshing',
       'lazyAtom',
+      'producer',
       'proxy',
       'resource',
       'toResult',

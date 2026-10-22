@@ -286,4 +286,43 @@ describe('observe', () => {
 
     expect(seen).toEqual([2]);
   });
+  it('sends errors to its own onError', () => {
+    const domainErrors: unknown[] = [];
+    const ownErrors: unknown[] = [];
+    const domain = new ReactiveDomain({
+      onError: error => domainErrors.push(error),
+    });
+    const count = atom('count', 0);
+
+    domain.observe(
+      count,
+      () => {
+        throw new Error('boom');
+      },
+      { onError: error => ownErrors.push(error) },
+    );
+    domain.set(count, 1);
+
+    expect(ownErrors).toHaveLength(1);
+    expect(domainErrors).toEqual([]);
+  });
+
+  it('sends errors from reading its source to its own onError', () => {
+    const ownErrors: unknown[] = [];
+    const domain = new ReactiveDomain({});
+    const count = atom('count', 0);
+    const checked = computed<number>('checked', $ => {
+      if ($.get(count) > 0) {
+        throw new Error('too high');
+      }
+      return 0;
+    });
+
+    domain.observe(checked, () => {}, {
+      onError: error => ownErrors.push(error),
+    });
+    domain.set(count, 1);
+
+    expect((ownErrors[0] as Error).message).toBe('too high');
+  });
 });

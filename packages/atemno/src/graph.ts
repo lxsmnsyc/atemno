@@ -8,6 +8,8 @@ import type {
   DerivedSource,
   IsEqual,
   LazyAtom,
+  Producer,
+  ProducerSetup,
   ProxyAtom,
   ProxyWrite,
   ReadableSource,
@@ -132,6 +134,32 @@ export function resource<T>(
 }
 
 /**
+ * Creates a read-only state fed from outside the domain, such as an event,
+ * a socket or another store. `setup` runs when the first computed or observer
+ * starts tracking it, and the cleanup it returns runs once the node is
+ * released. Reading it without tracking returns its latest value and does not
+ * start it.
+ * @param name a unique string to represent the producer
+ * @param initialValue the value until `setup` sets one
+ * @param setup starts the feed and returns a function that stops it
+ * @param isEqual tells whether the producer should update with the new value
+ */
+export function producer<T>(
+  name: string,
+  initialValue: T,
+  setup: ProducerSetup<T>,
+  isEqual?: IsEqual<T>,
+): Producer<T> {
+  return {
+    type: NodeType.Producer,
+    name,
+    initialValue,
+    setup,
+    isEqual: isEqual ?? IS_EQUAL,
+  };
+}
+
+/**
  * Thrown when reading a resource whose promise is still pending. `request` is
  * the promise, so a caller can wait for it.
  */
@@ -172,6 +200,8 @@ export class ReactiveDomain {
 
   private lazyAtoms = new Map<string, LazyAtomNode<any>>();
 
+  private producers = new Map<string, ProducerNode<any>>();
+
   private observers = new Set<ObserverNode<any>>();
 
   /**
@@ -183,6 +213,14 @@ export class ReactiveDomain {
 
   /** @internal */
   flushing = false;
+
+  /** How many `batch` calls are running. Observers wait until it is 0. */
+  private batchDepth = 0;
+
+  /** @internal */
+  isBatching(): boolean {
+    return this.batchDepth > 0;
+  }
 
   constructor(private options: ReactiveDomainOptions) {}
 
@@ -210,6 +248,11 @@ export class ReactiveDomain {
     for (const [, node] of this.lazyAtoms) {
       destroyAtomNode(this, node);
     }
+    // Stop and destroy all producers
+    for (const [, node] of this.producers) {
+      destroyProducerNode(this, node);
+    }
+    this.producers.clear();
 
     this.atoms.clear();
     this.lazyAtoms.clear();
@@ -298,6 +341,18 @@ export class ReactiveDomain {
     return instance;
   }
 
+  getProducer<T>(source: Producer<T>): ProducerNode<T> {
+    this.assertAlive();
+    const current = this.producers.get(source.name);
+    if (current) {
+      return current;
+    }
+    const instance = new ProducerNode(source, this);
+    this.producers.set(source.name, instance);
+    this.onCreate(source);
+    return instance;
+  }
+
   readAtom<T>(source: Atom<T>): T {
     const instance = this.getAtom(source);
     return instance.value;
@@ -341,6 +396,13 @@ export class ReactiveDomain {
     this.onDestroy(source);
   }
 
+  destroyProducer<T>(source: Producer<T>): void {
+    const instance = this.getProducer(source);
+    destroyProducerNode(this, instance);
+    this.producers.delete(source.name);
+    this.onDestroy(source);
+  }
+
   destroyLazyAtom<T>(source: LazyAtom<T>): void {
     const instance = this.getLazyAtom(source);
     destroyAtomNode(this, instance);
@@ -354,10 +416,30 @@ export class ReactiveDomain {
         return this.readAtom(source);
       case NodeType.LazyAtom:
         return this.readLazyAtom(source);
+      case NodeType.Producer:
+        return this.getProducer(source).value;
       case NodeType.Computed:
       case NodeType.Proxy:
       case NodeType.Resource:
         return this.readComputed(source);
+    }
+  }
+
+  /**
+   * Runs `callback`, holding back observers until it returns, so they only see
+   * the state after every write in it. Reads inside still see each write
+   * straight away. Batches nest, and observers run when the outermost one
+   * ends, even if it throws.
+   */
+  batch<R>(callback: () => R): R {
+    this.batchDepth++;
+    try {
+      return callback();
+    } finally {
+      this.batchDepth--;
+      if (this.batchDepth === 0) {
+        flushObservers(this);
+      }
     }
   }
 
@@ -371,7 +453,10 @@ export class ReactiveDomain {
           writeAtomNode(this, this.getLazyAtom(source), value);
           break;
         case NodeType.Proxy:
-          source.write(createActionContext(this), value);
+          // Observers see the proxy once, after every write `write` makes.
+          this.batch(() => {
+            source.write(createActionContext(this), value);
+          });
           break;
       }
     }
@@ -384,6 +469,9 @@ export class ReactiveDomain {
         break;
       case NodeType.LazyAtom:
         writeAtomNode(this, this.getLazyAtom(source), source.initialValue());
+        break;
+      case NodeType.Producer:
+        writeProducerNode(this, this.getProducer(source), source.initialValue);
         break;
       case NodeType.Computed:
       case NodeType.Proxy:
@@ -415,6 +503,9 @@ export class ReactiveDomain {
       case NodeType.LazyAtom:
         trackNode(observer.tracker, this.getLazyAtom(source));
         break;
+      case NodeType.Producer:
+        trackNode(observer.tracker, this.getProducer(source));
+        break;
       case NodeType.Computed:
       case NodeType.Proxy:
       case NodeType.Resource: {
@@ -430,6 +521,11 @@ export class ReactiveDomain {
 
     // The observer starts in sync with its source, so the next write marks it
     observer.tracker.state = State.Clean;
+    try {
+      observer.last = { value: this.get(source) };
+    } catch {
+      // A pending or failing source has no value to compare against yet.
+    }
 
     // Add to active observers
     this.observers.add(observer);
@@ -442,8 +538,12 @@ export class ReactiveDomain {
    * subscription keeps the source alive until the returned cleanup is
    * called.
    */
-  observe<T>(source: ReadableSource<T>, callback: (value: T) => void): Cleanup {
-    return this.addObserver(new ObserverNode(source, callback, false));
+  observe<T>(
+    source: ReadableSource<T>,
+    callback: (value: T) => void,
+    options?: ObserveOptions,
+  ): Cleanup {
+    return this.addObserver(new ObserverNode(source, callback, false, options));
   }
 
   /**
@@ -455,8 +555,9 @@ export class ReactiveDomain {
   observeWeak<T>(
     source: ReadableSource<T>,
     callback: (value: T) => void,
+    options?: ObserveOptions,
   ): Cleanup {
-    return this.addObserver(new ObserverNode(source, callback, true));
+    return this.addObserver(new ObserverNode(source, callback, true, options));
   }
 
   getAction<T, R>(action: Action<T, R>): NormalAction<T, R> {
@@ -495,6 +596,14 @@ class TrackerContextInternal {
     return instance.value;
   }
 
+  readProducer<T>(source: Producer<T>): T {
+    const instance = this.domain.getProducer(source);
+    if (this.alive && this.tracking) {
+      trackNode(this.tracker, instance);
+    }
+    return instance.value;
+  }
+
   readComputed<T>(source: DerivedSource<T>): T {
     const instance = this.domain.getDerived(source);
     revalidateComputed(this.domain, instance);
@@ -510,11 +619,17 @@ class TrackerContextInternal {
         return this.readAtom(source);
       case NodeType.LazyAtom:
         return this.readLazyAtom(source);
+      case NodeType.Producer:
+        return this.readProducer(source);
       case NodeType.Computed:
       case NodeType.Proxy:
       case NodeType.Resource:
         return this.readComputed(source);
     }
+  }
+
+  peek<T>(source: ReadableSource<T>): T {
+    return this.domain.get(source);
   }
 
   set<T>(source: WritableSource<T>, value: T) {
@@ -548,7 +663,11 @@ class TrackerContextInternal {
   }
 }
 
-type TrackableNode<T> = AtomNode<T> | ComputedNode<T> | LazyAtomNode<T>;
+type TrackableNode<T> =
+  | AtomNode<T>
+  | ComputedNode<T>
+  | LazyAtomNode<T>
+  | ProducerNode<T>;
 type TrackerNode<T> = ComputedNode<T> | ObserverNode<T>;
 
 /**
@@ -607,6 +726,29 @@ class LazyAtomNode<T> {
   }
 }
 
+class ProducerNode<T> {
+  type: NodeType.Producer = NodeType.Producer;
+
+  trackable = new Trackable(this);
+
+  value: T;
+
+  /** Whether `setup` has run. It runs once per node. */
+  started = false;
+
+  /** Set while `setup` runs, when values are taken without notifying. */
+  starting = false;
+
+  stop: Cleanup | void = undefined;
+
+  constructor(
+    public source: Producer<T>,
+    public domain: ReactiveDomain,
+  ) {
+    this.value = source.initialValue;
+  }
+}
+
 type ComputedResult<T> =
   | { type: ComputedState.Pending; value: Promise<T> }
   | { type: ComputedState.Success; value: T }
@@ -640,20 +782,31 @@ class ComputedNode<T> {
   constructor(public source: DerivedSource<T>) {}
 }
 
-export type BaseOptions = {
-  onError?: (value: unknown) => void;
-};
+export interface ObserveOptions {
+  /**
+   * Receives the errors this observer meets, from its callback or from
+   * reading its source, instead of the domain's `onError`.
+   */
+  onError?: (error: unknown) => void;
+}
 
 class ObserverNode<T> {
   type: NodeType.Observer | NodeType.WeakObserver;
 
   tracker: Tracker;
 
+  /**
+   * The value the observer last saw, so it is not called again with an equal
+   * one, such as after a batch that changes a value and changes it back.
+   * Unset while the source is pending or failing.
+   */
+  last: Ref<T> | undefined;
+
   constructor(
     public source: ReadableSource<T>,
     public compute: (value: T) => void,
     weak: boolean,
-    public options?: BaseOptions,
+    public options?: ObserveOptions,
   ) {
     this.type = weak ? NodeType.WeakObserver : NodeType.Observer;
     this.tracker = new Tracker(this, weak);
@@ -728,6 +881,9 @@ function releaseTrackable(
       case NodeType.LazyAtom:
         domain.destroyLazyAtom(trackable.parent.source);
         break;
+      case NodeType.Producer:
+        domain.destroyProducer(trackable.parent.source);
+        break;
     }
   }
 }
@@ -787,6 +943,24 @@ function destroyAtomNode<T>(
 ): void {
   destroyTrackable(domain, node.trackable);
 }
+function destroyProducerNode<T>(
+  domain: ReactiveDomain,
+  node: ProducerNode<T>,
+): void {
+  if (node.trackable.alive) {
+    const stop = node.stop;
+    node.stop = undefined;
+    destroyTrackable(domain, node.trackable);
+    if (stop) {
+      try {
+        stop();
+      } catch (error) {
+        domain.handleError(error);
+      }
+    }
+  }
+}
+
 function destroyComputedNode<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
@@ -804,7 +978,7 @@ function destroyObserverNode<T>(
 function handleError(
   domain: ReactiveDomain,
   error: unknown,
-  options?: BaseOptions,
+  options?: ObserveOptions,
 ): void {
   if (options?.onError) {
     try {
@@ -858,7 +1032,7 @@ function markTrackers(
  * that throws does not stop the others, the first error is rethrown after.
  */
 function flushObservers(domain: ReactiveDomain): void {
-  if (domain.flushing) {
+  if (domain.flushing || domain.isBatching()) {
     return;
   }
   domain.flushing = true;
@@ -955,6 +1129,44 @@ function writeComputedPending<T>(
 function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
   addTrackable(tracker, node.trackable);
   addTracker(node.trackable, tracker);
+  // A producer starts when something that keeps it alive first tracks it.
+  if (node.type === NodeType.Producer && !tracker.weak && !node.started) {
+    startProducerNode(node);
+  }
+}
+
+function startProducerNode<T>(node: ProducerNode<T>): void {
+  node.started = true;
+  node.starting = true;
+  try {
+    node.stop = node.source.setup(
+      value => {
+        writeProducerNode(node.domain, node, value);
+      },
+      () => node.value,
+    );
+  } catch (error) {
+    node.domain.handleError(error);
+  } finally {
+    node.starting = false;
+  }
+}
+
+function writeProducerNode<T>(
+  domain: ReactiveDomain,
+  node: ProducerNode<T>,
+  value: T,
+): void {
+  if (!node.trackable.alive || node.source.isEqual(node.value, value)) {
+    return;
+  }
+  node.value = value;
+  // A value set while starting arrives before the first reader reads it, so
+  // there is nothing to notify yet.
+  if (!node.starting) {
+    writeTrackable(domain, node.trackable, false);
+  }
+  domain.onUpdate(node.source);
 }
 
 function writeAtomNode<T>(
@@ -1004,6 +1216,7 @@ function createTrackerContext<T>(
 ): TrackerContext<T> {
   const context: TrackerContext<T> = {
     get: parent.get.bind(parent),
+    peek: parent.peek.bind(parent),
     set: parent.set.bind(parent),
     reset: parent.reset.bind(parent),
     onCleanup: parent.onCleanup.bind(parent),
@@ -1135,10 +1348,15 @@ function updateObserver<T>(
     if (!(error instanceof ResourceNotReadyError)) {
       handleError(domain, error, node.options);
     }
+    node.last = undefined;
     return;
   } finally {
     node.tracker.running = false;
   }
+  if (node.last && node.source.isEqual(node.last.value, value)) {
+    return;
+  }
+  node.last = { value };
   try {
     node.compute(value);
   } catch (error) {
@@ -1210,10 +1428,11 @@ function createActionContext(domain: ReactiveDomain): ActionContext {
   };
 }
 
+// Observers see the result of the whole action, not each write in it.
 function bindAction<T, R>(
   this: ReactiveDomain,
   action: Action<T, R>,
   value: T,
 ): R {
-  return action(createActionContext(this), value);
+  return this.batch(() => action(createActionContext(this), value));
 }
