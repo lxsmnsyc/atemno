@@ -476,9 +476,27 @@ export class ReactiveDomain {
       case NodeType.Computed:
       case NodeType.Proxy:
       case NodeType.Resource:
-        updateComputed(this, this.getDerived(source));
+        this.markStale(source);
         break;
     }
+  }
+
+  /**
+   * Marks a computed, proxy atom or resource as stale, so it runs again even
+   * though none of its dependencies changed. If something observes it, it runs
+   * now, the same way it would after a write. Otherwise it waits for its next
+   * read. A source this domain has not evaluated yet is left alone.
+   */
+  private markStale<T>(source: DerivedSource<T>): void {
+    const instance = this.derivedNodes(source).get(source.name);
+    if (!instance || instance.tracker.state === State.Uninitialized) {
+      return;
+    }
+    instance.tracker.state = State.Dirty;
+    // Its readers may now be stale too. Observers among them are queued and
+    // pull it back up to date.
+    markTrackers(this, instance.trackable, State.Check, false);
+    flushObservers(this);
   }
 
   private destroyObserver<T>(instance: ObserverNode<T>): void {

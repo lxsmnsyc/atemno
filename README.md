@@ -136,6 +136,10 @@ domain.reset(message);
 domain.get(message); // "Hello, World!"
 ```
 
+Resetting a computed, proxy atom or resource makes it run again without any of
+its dependencies changing, such as to refetch a resource. It reruns straight
+away if something observes it, and otherwise on its next read.
+
 A write that produces an equal value is ignored. Nothing recomputes and no
 observer runs. Equality defaults to `Object.is` semantics, so `NaN` equals
 itself. Pass your own check as the third argument.
@@ -490,7 +494,7 @@ every read of it is `unknown`.
 | --------------------------- | ---------------------------------------------------------------- |
 | `get(source)`               | Reads any source, initializing it if needed.                     |
 | `set(source, value)`        | Writes an atom or lazy atom, or passes a value to a proxy atom.  |
-| `reset(source)`             | Restores an atom's initial value, or forces a computed to rerun. |
+| `reset(source)`             | Restores an atom's initial value, or makes a computed run again. |
 | `observe(source, callback)` | Subscribes to changes. Returns a cleanup function.               |
 | `observeWeak(source, cb)`   | Subscribes without keeping the source alive.                     |
 | `batch(callback)`           | Holds observers back until the callback returns.                 |

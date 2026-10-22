@@ -96,6 +96,19 @@ const user = resource<User>('user', async $ => fetchUser($.get(userId)), {
 
 The third argument is either an equality check, as before, or an options object with `isEqual` and `keepPrevious`.
 
+## Refetching
+
+`domain.reset(user)` runs a resource again without changing anything it reads. If something observes it, the new request starts straight away. In React, `useResetSource(user)` returns a callback that does the same.
+
+```tsx
+function Reload() {
+  const reload = useResetSource(user);
+  return <button onClick={reload}>Reload</button>;
+}
+```
+
+A resource with `keepPrevious` keeps returning its last value while the new request runs, and `isRefreshing(user)` is true until it settles.
+
 ## Downstream of a resource
 
 A computed that reads a pending resource throws the same `ResourceNotReadyError`, and so does anything reading that computed. When the resource settles, they rerun like after any other change.
