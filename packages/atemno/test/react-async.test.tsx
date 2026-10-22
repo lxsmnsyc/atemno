@@ -11,7 +11,14 @@ import {
   useAtomState,
   useComputedValue,
 } from '../src/bindings/react';
-import { atom, computed, proxy, ReactiveDomain, resource } from '../src/index';
+import {
+  atom,
+  computed,
+  isRefreshing,
+  proxy,
+  ReactiveDomain,
+  resource,
+} from '../src/index';
 
 let host: HTMLDivElement;
 
@@ -256,5 +263,60 @@ describe('useAtemnoGraph', () => {
     const byKind = Object.fromEntries(nodes.map(node => [node.kind, node]));
     expect(Object.keys(byKind).sort()).toEqual(['atom', 'proxy', 'resource']);
     expect(byKind.resource).toMatchObject({ pending: true, failed: false });
+  });
+});
+
+describe('useComputedValue with keepPrevious', () => {
+  it('keeps showing the previous value instead of suspending', async () => {
+    const id = atom('id', 1);
+    const requests: ReturnType<typeof deferred<string>>[] = [];
+    const user = resource<string>(
+      'user',
+      $ => {
+        $.get(id);
+        const request = deferred<string>();
+        requests.push(request);
+        return request.promise;
+      },
+      { keepPrevious: true },
+    );
+    let domain: ReactiveDomain | undefined;
+
+    function Show() {
+      domain = useAtemnoDomain();
+      const name = useComputedValue(user);
+      const refreshing = useComputedValue(isRefreshing(user));
+      return (
+        <span>
+          {name}
+          {refreshing ? ' (refreshing)' : ''}
+        </span>
+      );
+    }
+
+    await render(
+      <AtemnoDomain>
+        <Suspense fallback="loading">
+          <Show />
+        </Suspense>
+      </AtemnoDomain>,
+    );
+    expect(host.textContent).toBe('loading');
+    await act(async () => {
+      requests[0].resolve('one');
+      await tick();
+    });
+    expect(host.textContent).toBe('one');
+
+    act(() => {
+      domain?.set(id, 2);
+    });
+    expect(host.textContent).toBe('one (refreshing)');
+
+    await act(async () => {
+      requests[1].resolve('two');
+      await tick();
+    });
+    expect(host.textContent).toBe('two');
   });
 });

@@ -12,6 +12,7 @@ describe('public entry point', () => {
       'computed',
       'computedFactory',
       'isPending',
+      'isRefreshing',
       'lazyAtom',
       'producer',
       'proxy',

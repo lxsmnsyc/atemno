@@ -16,6 +16,7 @@ import type {
   Ref,
   Resource,
   ResourceComputation,
+  ResourceOptions,
   TrackerContext,
   WritableSource,
 } from './types';
@@ -113,18 +114,22 @@ export function proxy<T>(
  * rejection. Only the reads made before the first `await` are tracked.
  * @param name a unique string to represent the resource
  * @param compute a function that produces the state of the resource
- * @param isEqual tells whether the resource should update with the resolved value
+ * @param options an equality check, or options with `isEqual` and
+ * `keepPrevious`
  */
 export function resource<T>(
   name: string,
   compute: ResourceComputation<T>,
-  isEqual?: IsEqual<T>,
+  options?: IsEqual<T> | ResourceOptions<T>,
 ): Resource<T> {
+  const resolved: ResourceOptions<T> =
+    typeof options === 'function' ? { isEqual: options } : (options ?? {});
   return {
     type: NodeType.Resource,
     name,
     compute,
-    isEqual: isEqual ?? IS_EQUAL,
+    isEqual: resolved.isEqual ?? IS_EQUAL,
+    keepPrevious: resolved.keepPrevious ?? false,
   };
 }
 
@@ -357,6 +362,19 @@ export class ReactiveDomain {
     const instance = this.getDerived(source);
     revalidateComputed(this, instance);
     return readComputed(instance);
+  }
+
+  /**
+   * Whether a resource kept its previous value and a newer one is on the way.
+   * @internal
+   */
+  isRefreshing<T>(source: ReadableSource<T>): boolean {
+    if (source.type !== NodeType.Resource) {
+      return false;
+    }
+    const instance = this.getDerived(source);
+    revalidateComputed(this, instance);
+    return instance.refreshing !== undefined;
   }
 
   readLazyAtom<T>(source: LazyAtom<T>): T {
@@ -755,6 +773,12 @@ class ComputedNode<T> {
    */
   run = 0;
 
+  /**
+   * The pending request of a resource that keeps showing its previous value
+   * while it reruns.
+   */
+  refreshing: Promise<T> | undefined;
+
   constructor(public source: DerivedSource<T>) {}
 }
 
@@ -1055,6 +1079,18 @@ function writeComputedSuccess<T>(
   node: ComputedNode<T>,
   value: T,
 ): void {
+  if (node.refreshing) {
+    // Readers of the refresh state change even when the value does not.
+    node.refreshing = undefined;
+    if (
+      node.state &&
+      node.state.type === ComputedState.Success &&
+      node.source.isEqual(node.state.value, value)
+    ) {
+      writeTrackable(domain, node.trackable, true);
+      return;
+    }
+  }
   if (
     node.state &&
     node.state.type === ComputedState.Success &&
@@ -1073,6 +1109,7 @@ function writeComputedFailure<T>(
   node: ComputedNode<T>,
   error: unknown,
 ): void {
+  node.refreshing = undefined;
   node.state = { type: ComputedState.Failure, value: error };
   writeTrackable(domain, node.trackable, true);
   domain.onUpdate(node.source);
@@ -1083,6 +1120,7 @@ function writeComputedPending<T>(
   node: ComputedNode<T>,
   request: Promise<T>,
 ): void {
+  node.refreshing = undefined;
   node.state = { type: ComputedState.Pending, value: request };
   writeTrackable(domain, node.trackable, true);
   domain.onUpdate(node.source);
@@ -1161,11 +1199,22 @@ function readComputed<T>(node: ComputedNode<T>): T {
   throw new Error('Node is uninitialized.');
 }
 
+const CONTEXT_DOMAIN = Symbol('atemno.domain');
+
+/**
+ * Returns the domain behind a tracker context, for helpers that need more than
+ * the context offers.
+ * @internal
+ */
+export function getContextDomain(context: TrackerContext<any>): ReactiveDomain {
+  return (context as unknown as Record<symbol, ReactiveDomain>)[CONTEXT_DOMAIN];
+}
+
 function createTrackerContext<T>(
   parent: TrackerContextInternal,
   previous: Ref<T> | undefined,
 ): TrackerContext<T> {
-  return {
+  const context: TrackerContext<T> = {
     get: parent.get.bind(parent),
     peek: parent.peek.bind(parent),
     set: parent.set.bind(parent),
@@ -1173,6 +1222,8 @@ function createTrackerContext<T>(
     onCleanup: parent.onCleanup.bind(parent),
     previous,
   };
+  Object.defineProperty(context, CONTEXT_DOMAIN, { value: parent.domain });
+  return context;
 }
 
 function updateTrackerContext<T>(
@@ -1263,7 +1314,18 @@ function updateComputed<T>(
     isPromiseLike<T>(result.value)
   ) {
     const request = Promise.resolve(result.value);
-    writeComputedPending(domain, node, request);
+    if (
+      node.source.keepPrevious &&
+      node.state &&
+      node.state.type === ComputedState.Success
+    ) {
+      // Keep the resolved value readable, and tell readers a newer one is on
+      // the way.
+      node.refreshing = request;
+      writeTrackable(domain, node.trackable, true);
+    } else {
+      writeComputedPending(domain, node, request);
+    }
     settleResource(domain, node, run, request);
   } else {
     writeComputedSuccess(domain, node, result.value as T);
