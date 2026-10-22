@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { isRefreshing } from '../src/concurrency';
 import {
   action,
   atom,
@@ -94,6 +95,25 @@ describe('reset on a computed', () => {
     await settle();
 
     expect(seen).toEqual([1, 2]);
+  });
+
+  it('keeps the previous value of a keepPrevious resource', async () => {
+    const domain = new ReactiveDomain({});
+    let version = 0;
+    const data = resource<number>('data', async () => ++version, {
+      keepPrevious: true,
+    });
+    const seen: number[] = [];
+    domain.observe(data, value => seen.push(value));
+    await settle();
+
+    domain.reset(data);
+    expect(domain.get(data)).toBe(1);
+    expect(domain.get(isRefreshing(data))).toBe(true);
+    await settle();
+
+    expect(seen).toEqual([1, 2]);
+    expect(domain.get(isRefreshing(data))).toBe(false);
   });
 
   it('leaves a source the domain has not evaluated alone', () => {
