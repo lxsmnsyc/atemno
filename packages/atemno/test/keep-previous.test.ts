@@ -85,14 +85,17 @@ describe('keepPrevious', () => {
   it('replaces the previous value with a rejection', async () => {
     const domain = new ReactiveDomain({});
     const { id, user, requests } = createUser(true);
-    domain.observe(user, () => {});
+    const errors: unknown[] = [];
+    domain.observe(user, () => {}, { onError: error => errors.push(error) });
     requests[0].resolve('one');
     await settle();
 
     domain.set(id, 2);
-    requests[1].reject(new Error('offline'));
+    const failure = new Error('offline');
+    requests[1].reject(failure);
     await settle();
 
+    expect(errors).toEqual([failure]);
     expect(() => domain.get(user)).toThrow('offline');
     expect(domain.get(isRefreshing(user))).toBe(false);
   });
