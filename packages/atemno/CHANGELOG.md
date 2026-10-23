@@ -1,5 +1,28 @@
 # atemno
 
+## 0.2.0
+
+### Minor Changes
+
+- fde0f43: Add `domain.batch`, `producer`, `$.peek` and per-observer `onError`.
+
+  - `domain.batch(callback)` holds observers back until the callback returns, so they see the end result once. Actions and writes to proxy atoms now run in a batch.
+  - An observer is no longer called with a value equal to the last one it saw.
+  - `producer(name, initialValue, setup)` describes a read-only value fed from outside the domain. `setup` starts when something first tracks it, and its cleanup runs when the node is released.
+  - `$.peek(source)` reads a source inside a computation without making it a dependency.
+  - `observe` and `observeWeak` take `{ onError }` to handle one observer's errors.
+  - `AtemnoDomain` takes an `initialize` callback that receives the new domain before anything renders.
+
+  Breaking: `AtemnoProvider` is no longer exported. Use `AtemnoDomain` with `initialize` to set the starting state.
+
+- dc5e355: Add `keepPrevious` to resources, and `isRefreshing`.
+
+  - `resource(name, compute, { keepPrevious: true })` keeps returning the last resolved value while a rerun is pending, instead of throwing a `ResourceNotReadyError`. In React, the component keeps its content instead of falling back to `Suspense`.
+  - `isRefreshing(source)` is a computed that is true while such a rerun is in flight.
+  - The third argument of `resource` still accepts an equality check, or an options object with `isEqual` and `keepPrevious`.
+
+- eb71a05: `reset` on a computed, proxy atom or resource now marks it stale instead of running it straight away. It reruns at once if something observes it, and otherwise on its next read. Readers are updated through the usual propagation, so a rerun that gives an equal value notifies no one. Resetting a source the domain has not evaluated yet does nothing. Use it to refetch a resource, or to recompute a value that reads something atemno does not track.
+
 ## 0.1.0
 
 ### Minor Changes
