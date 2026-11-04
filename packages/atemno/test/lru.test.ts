@@ -49,7 +49,7 @@ describe('LRUMap', () => {
     const map = new LRUMap<string, number>(2);
     map.set('a', 1);
     map.set('b', 2);
-    // Bubbles 'a' away from the tail, so 'b' becomes the eviction candidate.
+    // Reading 'a' makes it the most recent, so 'b' is evicted next.
     map.get('a');
     map.set('c', 3);
 
@@ -81,5 +81,54 @@ describe('LRUMap', () => {
     }
 
     expect(map.get('key-99')).toBe(99);
+  });
+
+  it('overwrites the value when a present key is set again', () => {
+    const map = new LRUMap<number, number>(2);
+    map.set(1, 10);
+    map.set(1, 20);
+
+    expect(map.get(1)).toBe(20);
+  });
+
+  it('moves a read key to the front, not one place up', () => {
+    const map = new LRUMap<number, number>(3);
+    map.set(5, 0);
+    map.set(0, 0);
+    map.set(1, 0);
+
+    // Order is 1, 0, 5. Reading 5 makes it the most recent: 5, 1, 0.
+    map.get(5);
+    map.set(2, 0);
+    map.set(3, 0);
+
+    expect(map.has(5)).toBe(true);
+    expect(map.has(0)).toBe(false);
+    expect(map.has(1)).toBe(false);
+  });
+
+  it('keeps its limit after the newest key is deleted', () => {
+    const map = new LRUMap<number, number>(1);
+    map.set(1, 0);
+    map.delete(1);
+    map.set(0, 0);
+    map.set(1, 0);
+
+    expect(map.has(0)).toBe(false);
+    expect(map.has(1)).toBe(true);
+  });
+
+  it('keeps its limit after keys in the middle are deleted', () => {
+    const map = new LRUMap<number, number>(2);
+    map.set(1, 0);
+    map.set(2, 0);
+    map.set(3, 0);
+    map.delete(2);
+    map.set(4, 0);
+    map.set(5, 0);
+
+    expect(map.has(3)).toBe(false);
+    expect(map.has(4)).toBe(true);
+    expect(map.has(5)).toBe(true);
   });
 });
