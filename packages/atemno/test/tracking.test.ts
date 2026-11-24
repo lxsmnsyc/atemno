@@ -59,6 +59,7 @@ describe('dependency tracking', () => {
   it('keeps context methods working when taken off the context', () => {
     const domain = new ReactiveDomain({});
     const source = atom('source', 1);
+    // oxlint-disable-next-line typescript/unbound-method
     const doubled = computed<number>('doubled', ({ get }) => get(source) * 2);
     const seen: number[] = [];
     domain.observe(doubled, value => seen.push(value));
@@ -105,5 +106,58 @@ describe('dependency tracking', () => {
     domain.set(fail, true);
 
     expect(stopped).toEqual(['source']);
+  });
+
+  it('releases dependencies on destroy in the order the last run read them', () => {
+    const domain = new ReactiveDomain({});
+    const stopped: string[] = [];
+    function createSource(name: string) {
+      return producer(name, 0, () => () => {
+        stopped.push(name);
+      });
+    }
+    const a = createSource('a');
+    const b = createSource('b');
+    const swapped = atom('swapped', false);
+    const reader = computed<number>('reader', $ =>
+      $.get(swapped) ? $.get(b) + $.get(a) : $.get(a) + $.get(b),
+    );
+    domain.observe(reader, () => {});
+    domain.set(swapped, true);
+
+    domain.destroy();
+
+    expect(stopped).toEqual(['b', 'a']);
+  });
+
+  it('releases every dependency when a run reads nothing', () => {
+    const domain = new ReactiveDomain({});
+    const stopped: string[] = [];
+    const source = producer('source', 0, () => () => {
+      stopped.push('source');
+    });
+    const enabled = atom('enabled', true);
+    const reader = computed<number>('reader', $ =>
+      $.peek(enabled) ? $.get(source) : 0,
+    );
+    domain.observe(reader, () => {});
+
+    domain.set(enabled, false);
+    domain.reset(reader);
+
+    expect(stopped).toEqual(['source']);
+  });
+
+  it('reads no domain from a copy of the context', async () => {
+    const { getContextDomain } = await import('../src/graph');
+    const domain = new ReactiveDomain({});
+    let found: unknown = null;
+    const reader = computed<number>('reader', $ => {
+      found = getContextDomain({ ...$ });
+      return 0;
+    });
+    domain.get(reader);
+
+    expect(found).toBeUndefined();
   });
 });

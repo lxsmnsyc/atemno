@@ -929,11 +929,21 @@ function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
   if (!(node.trackables && node.trackables.size)) {
     return;
   }
-  for (const trackable of [...node.trackables.keys()]) {
+  const trackables = node.trackables;
+  // Release in the order the latest run read them.
+  if (node.order) {
+    for (const trackable of node.order) {
+      if (trackables.delete(trackable)) {
+        releaseTrackable(domain, node, trackable);
+      }
+    }
+  }
+  // Only a tracker destroyed during a run has trackables left here.
+  for (const trackable of [...trackables.keys()]) {
     releaseTrackable(domain, node, trackable);
   }
 
-  node.trackables.clear();
+  trackables.clear();
   node.order = undefined;
   node.previousOrder = undefined;
 }
@@ -1310,7 +1320,8 @@ class TrackerContextImpl<T> implements TrackerContext<T> {
   }
 
   static getDomain(context: TrackerContext<any>): ReactiveDomain {
-    return (context as TrackerContextImpl<any>).#domain;
+    // A copy of a context has no domain, and reads as undefined.
+    return (#domain in context ? context.#domain : undefined) as ReactiveDomain;
   }
 }
 
