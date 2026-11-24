@@ -717,10 +717,20 @@ class Tracker {
    * released.
    */
   trackables: Map<Trackable, Ref<number>> | undefined;
+  /**
+   * The trackables of the latest run, in read order. May hold entries that
+   * left `trackables`, which readers skip.
+   */
+  order: Trackable[] | undefined;
+  /**
+   * The order of the run before, kept until its unused trackables are
+   * released. The two arrays swap at the start of each run.
+   */
+  previousOrder: Trackable[] | undefined;
   /** Counts the runs of the tracker's computation. */
   run = 0;
-  /** How many trackables the current run has tracked. */
-  tracked = 0;
+  /** Set when a trackable left `trackables` outside a release. */
+  removed = false;
   context: TrackerContextInternal | undefined = undefined;
 
   constructor(
@@ -863,13 +873,8 @@ function cleanTrackers(domain: ReactiveDomain, node: Trackable): void {
     return;
   }
   for (const tracker of [...node.trackers]) {
-    const run = tracker.trackables && tracker.trackables.get(node);
-    if (run) {
-      tracker.trackables!.delete(node);
-      // Keep the count of the current run in step with the Map.
-      if (run.value === tracker.run) {
-        tracker.tracked--;
-      }
+    if (tracker.trackables && tracker.trackables.delete(node)) {
+      tracker.removed = true;
     }
     if (tracker.parent.type !== NodeType.Computed) {
       domain.forgetObserver(tracker.parent);
@@ -929,41 +934,50 @@ function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
   }
 
   node.trackables.clear();
+  node.order = undefined;
+  node.previousOrder = undefined;
 }
 
 /**
  * Releases the trackables a tracker depended on before its latest run but did
  * not track again. Trackables that survived are left untouched, so a
- * recomputation never destroys a dependency it is about to reuse.
+ * recomputation never destroys a dependency it is about to reuse. Released
+ * trackables go in the order the run before the latest one read them.
  */
 function releaseUnusedTrackables(domain: ReactiveDomain, node: Tracker): void {
   const trackables = node.trackables;
+  const previous = node.previousOrder;
+  if (!(trackables && previous && previous.length)) {
+    return;
+  }
   // Every trackable was tracked again, so there is nothing to release.
-  if (!trackables || node.tracked === trackables.size) {
+  if (!node.removed && node.order && node.order.length === trackables.size) {
+    previous.length = 0;
     return;
   }
-  // When most dependencies changed, copying the survivors into a new Map is
-  // cheaper than deleting the rest one by one.
-  if (node.tracked * 2 < trackables.size) {
-    const current = new Map<Trackable, Ref<number>>();
-    node.trackables = current;
-    for (const [trackable, run] of trackables) {
-      if (run.value === node.run) {
-        current.set(trackable, run);
-      }
-    }
-    for (const [trackable, run] of trackables) {
-      if (run.value !== node.run) {
-        releaseTrackable(domain, node, trackable);
-      }
-    }
-    return;
-  }
-  for (const [trackable, run] of trackables) {
-    if (run.value !== node.run) {
+  node.removed = false;
+  for (const trackable of previous) {
+    const run = trackables.get(trackable);
+    if (run && run.value !== node.run) {
       trackables.delete(trackable);
       releaseTrackable(domain, node, trackable);
     }
+  }
+  previous.length = 0;
+}
+
+/**
+ * Starts a new run of a tracker. The order of the run before is kept aside,
+ * so its unused trackables can be released after the run.
+ */
+function startTrackerRun(node: Tracker): void {
+  node.run++;
+  const previous = node.order;
+  node.order = node.previousOrder;
+  node.previousOrder = previous;
+  // Empty unless the release after the last run was skipped.
+  if (node.order) {
+    node.order.length = 0;
   }
 }
 
@@ -1177,17 +1191,20 @@ function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
   if (!tracker.trackables) {
     tracker.trackables = new Map();
   }
+  if (!tracker.order) {
+    tracker.order = [];
+  }
   const run = tracker.trackables.get(node.trackable);
   if (run) {
     if (run.value !== tracker.run) {
       // Tracked by an earlier run, so the trackable already knows the tracker.
       run.value = tracker.run;
-      tracker.tracked++;
+      tracker.order.push(node.trackable);
     }
     return;
   }
   tracker.trackables.set(node.trackable, { value: tracker.run });
-  tracker.tracked++;
+  tracker.order.push(node.trackable);
   addTracker(node.trackable, tracker);
   // A producer starts when something that keeps it alive first tracks it.
   if (node.type === NodeType.Producer && !tracker.weak && !node.started) {
@@ -1272,24 +1289,28 @@ function readComputed<T>(node: ComputedNode<T>): T {
  * still work when taken off the context.
  */
 class TrackerContextImpl<T> implements TrackerContext<T> {
-  private readonly domain: ReactiveDomain;
+  // Private, so spreading the context or listing its keys does not show it.
+  readonly #domain: ReactiveDomain;
 
   get: TrackerContext<T>['get'];
   peek: TrackerContext<T>['peek'];
   set: TrackerContext<T>['set'];
   reset: TrackerContext<T>['reset'];
   onCleanup: TrackerContext<T>['onCleanup'];
+  previous: Ref<T> | undefined;
 
-  constructor(
-    parent: TrackerContextInternal,
-    public previous: Ref<T> | undefined,
-  ) {
-    this.domain = parent.domain;
+  constructor(parent: TrackerContextInternal, previous: Ref<T> | undefined) {
+    this.#domain = parent.domain;
     this.get = source => parent.get(source);
     this.peek = source => parent.peek(source);
     this.set = (source, value) => parent.set(source, value);
     this.reset = source => parent.reset(source);
     this.onCleanup = cleanup => parent.onCleanup(cleanup);
+    this.previous = previous;
+  }
+
+  static getDomain(context: TrackerContext<any>): ReactiveDomain {
+    return (context as TrackerContextImpl<any>).#domain;
   }
 }
 
@@ -1299,7 +1320,7 @@ class TrackerContextImpl<T> implements TrackerContext<T> {
  * @internal
  */
 export function getContextDomain(context: TrackerContext<any>): ReactiveDomain {
-  return (context as TrackerContextImpl<any>)['domain'];
+  return TrackerContextImpl.getDomain(context);
 }
 
 function updateTrackerContext<T>(
@@ -1355,8 +1376,7 @@ function updateComputed<T>(
   // Start a new run of the tracker. Old dependencies are only released after
   // the recomputation, so dependencies that get tracked again are never torn
   // down in between.
-  node.tracker.run++;
-  node.tracker.tracked = 0;
+  startTrackerRun(node.tracker);
 
   // Mark this node clean
   node.tracker.state = State.Clean;
@@ -1442,10 +1462,13 @@ function updateObserver<T>(
 
 function isTrackerDirty(domain: ReactiveDomain, node: Tracker): boolean {
   // Check if one of the trackables are dirty
-  if (node.trackables && node.trackables.size) {
-    // Revalidating a dependency can release others, which a Map iteration
-    // skips safely.
-    for (const trackable of node.trackables.keys()) {
+  const trackables = node.trackables;
+  if (trackables && node.order) {
+    for (const trackable of node.order) {
+      // Revalidating a dependency can release others, which are skipped.
+      if (!trackables.has(trackable)) {
+        continue;
+      }
       if (trackable.parent.type === NodeType.Computed) {
         revalidateComputed(domain, trackable.parent);
       }
