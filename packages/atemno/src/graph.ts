@@ -514,33 +514,34 @@ export class ReactiveDomain {
     const source = observer.source;
 
     // Track the source
+    let target: TrackableNode<T>;
     switch (source.type) {
       case NodeType.Atom:
-        trackNode(observer.tracker, this.getAtom(source));
+        target = this.getAtom(source);
         break;
       case NodeType.LazyAtom:
-        trackNode(observer.tracker, this.getLazyAtom(source));
+        target = this.getLazyAtom(source);
         break;
       case NodeType.Producer:
-        trackNode(observer.tracker, this.getProducer(source));
+        target = this.getProducer(source);
         break;
       case NodeType.Computed:
       case NodeType.Proxy:
-      case NodeType.Resource: {
-        const instance = this.getDerived(source);
+      case NodeType.Resource:
+        target = this.getDerived(source);
         // Initialize the computed before tracking it. The first evaluation
         // notifies its trackers, and this observer must not be one of them
         // yet, otherwise subscribing fires the callback.
-        revalidateComputed(this, instance);
-        trackNode(observer.tracker, instance);
+        revalidateComputed(this, target);
         break;
-      }
     }
+    observer.target = target;
+    trackNode(observer.tracker, target);
 
     // The observer starts in sync with its source, so the next write marks it
     observer.tracker.state = State.Clean;
     try {
-      observer.last = { value: this.get(source) };
+      observer.last = { value: readNode(this, target) };
     } catch {
       // A pending or failing source has no value to compare against yet.
     }
@@ -710,7 +711,26 @@ class Tracker {
    * fresh while it runs, so their updates must not mark it again.
    */
   running = false;
-  trackables: Set<Trackable> | undefined;
+  /**
+   * What the tracker depends on, each with the run that last tracked it. A
+   * trackable whose run is older than `run` was not read again and can be
+   * released.
+   */
+  trackables: Map<Trackable, Ref<number>> | undefined;
+  /**
+   * The trackables of the latest run, in read order. May hold entries that
+   * left `trackables`, which readers skip.
+   */
+  order: Trackable[] | undefined;
+  /**
+   * The order of the run before, kept until its unused trackables are
+   * released. The two arrays swap at the start of each run.
+   */
+  previousOrder: Trackable[] | undefined;
+  /** Counts the runs of the tracker's computation. */
+  run = 0;
+  /** Set when a trackable left `trackables` outside a release. */
+  removed = false;
   context: TrackerContextInternal | undefined = undefined;
 
   constructor(
@@ -820,6 +840,12 @@ class ObserverNode<T> {
    */
   last: Ref<T> | undefined;
 
+  /**
+   * The node of the source. The observer ends when that node is destroyed, so
+   * it stays the source's node for as long as the observer runs.
+   */
+  target: TrackableNode<T> | undefined;
+
   constructor(
     public source: ReadableSource<T>,
     public compute: (value: T) => void,
@@ -829,13 +855,6 @@ class ObserverNode<T> {
     this.type = weak ? NodeType.WeakObserver : NodeType.Observer;
     this.tracker = new Tracker(this, weak);
   }
-}
-
-function addTrackable(node: Tracker, trackable: Trackable): void {
-  if (!node.trackables) {
-    node.trackables = new Set();
-  }
-  node.trackables.add(trackable);
 }
 
 function addTracker(node: Trackable, tracker: Tracker): void {
@@ -854,8 +873,8 @@ function cleanTrackers(domain: ReactiveDomain, node: Trackable): void {
     return;
   }
   for (const tracker of [...node.trackers]) {
-    if (tracker.trackables) {
-      tracker.trackables.delete(node);
+    if (tracker.trackables && tracker.trackables.delete(node)) {
+      tracker.removed = true;
     }
     if (tracker.parent.type !== NodeType.Computed) {
       domain.forgetObserver(tracker.parent);
@@ -910,31 +929,65 @@ function cleanTrackables(domain: ReactiveDomain, node: Tracker): void {
   if (!(node.trackables && node.trackables.size)) {
     return;
   }
-  for (const trackable of [...node.trackables]) {
+  const trackables = node.trackables;
+  // Release in the order the latest run read them.
+  if (node.order) {
+    for (const trackable of node.order) {
+      if (trackables.delete(trackable)) {
+        releaseTrackable(domain, node, trackable);
+      }
+    }
+  }
+  // Only a tracker destroyed during a run has trackables left here.
+  for (const trackable of [...trackables.keys()]) {
     releaseTrackable(domain, node, trackable);
   }
 
-  node.trackables.clear();
+  trackables.clear();
+  node.order = undefined;
+  node.previousOrder = undefined;
 }
 
 /**
  * Releases the trackables a tracker depended on before its latest run but did
  * not track again. Trackables that survived are left untouched, so a
- * recomputation never destroys a dependency it is about to reuse.
+ * recomputation never destroys a dependency it is about to reuse. Released
+ * trackables go in the order the run before the latest one read them.
  */
-function releaseUnusedTrackables(
-  domain: ReactiveDomain,
-  node: Tracker,
-  previous: Set<Trackable> | undefined,
-): void {
-  if (!(previous && previous.size)) {
+function releaseUnusedTrackables(domain: ReactiveDomain, node: Tracker): void {
+  const trackables = node.trackables;
+  const previous = node.previousOrder;
+  if (!(trackables && previous && previous.length)) {
     return;
   }
-  const current = node.trackables;
-  for (const trackable of [...previous]) {
-    if (!(current && current.has(trackable))) {
+  // Every trackable was tracked again, so there is nothing to release.
+  if (!node.removed && node.order && node.order.length === trackables.size) {
+    previous.length = 0;
+    return;
+  }
+  node.removed = false;
+  for (const trackable of previous) {
+    const run = trackables.get(trackable);
+    if (run && run.value !== node.run) {
+      trackables.delete(trackable);
       releaseTrackable(domain, node, trackable);
     }
+  }
+  previous.length = 0;
+}
+
+/**
+ * Starts a new run of a tracker. The order of the run before is kept aside,
+ * so its unused trackables can be released after the run.
+ */
+function startTrackerRun(node: Tracker): void {
+  node.run++;
+  const previous = node.order;
+  node.order = node.previousOrder;
+  node.previousOrder = previous;
+  // Empty unless the release after the last run was skipped.
+  if (node.order) {
+    node.order.length = 0;
   }
 }
 
@@ -1145,7 +1198,23 @@ function writeComputedPending<T>(
 }
 
 function trackNode<T>(tracker: Tracker, node: TrackableNode<T>): void {
-  addTrackable(tracker, node.trackable);
+  if (!tracker.trackables) {
+    tracker.trackables = new Map();
+  }
+  if (!tracker.order) {
+    tracker.order = [];
+  }
+  const run = tracker.trackables.get(node.trackable);
+  if (run) {
+    if (run.value !== tracker.run) {
+      // Tracked by an earlier run, so the trackable already knows the tracker.
+      run.value = tracker.run;
+      tracker.order.push(node.trackable);
+    }
+    return;
+  }
+  tracker.trackables.set(node.trackable, { value: tracker.run });
+  tracker.order.push(node.trackable);
   addTracker(node.trackable, tracker);
   // A producer starts when something that keeps it alive first tracks it.
   if (node.type === NodeType.Producer && !tracker.weak && !node.started) {
@@ -1200,6 +1269,14 @@ function writeAtomNode<T>(
   }
 }
 
+function readNode<T>(domain: ReactiveDomain, node: TrackableNode<T>): T {
+  if (node.type === NodeType.Computed) {
+    revalidateComputed(domain, node);
+    return readComputed(node);
+  }
+  return node.value;
+}
+
 function readComputed<T>(node: ComputedNode<T>): T {
   if (node.state) {
     if (node.state.type === ComputedState.Success) {
@@ -1217,7 +1294,36 @@ function readComputed<T>(node: ComputedNode<T>): T {
   throw new Error('Node is uninitialized.');
 }
 
-const CONTEXT_DOMAIN = Symbol('atemno.domain');
+/**
+ * The context a computation receives. Its methods are own properties, so they
+ * still work when taken off the context.
+ */
+class TrackerContextImpl<T> implements TrackerContext<T> {
+  // Private, so spreading the context or listing its keys does not show it.
+  readonly #domain: ReactiveDomain;
+
+  get: TrackerContext<T>['get'];
+  peek: TrackerContext<T>['peek'];
+  set: TrackerContext<T>['set'];
+  reset: TrackerContext<T>['reset'];
+  onCleanup: TrackerContext<T>['onCleanup'];
+  previous: Ref<T> | undefined;
+
+  constructor(parent: TrackerContextInternal, previous: Ref<T> | undefined) {
+    this.#domain = parent.domain;
+    this.get = source => parent.get(source);
+    this.peek = source => parent.peek(source);
+    this.set = (source, value) => parent.set(source, value);
+    this.reset = source => parent.reset(source);
+    this.onCleanup = cleanup => parent.onCleanup(cleanup);
+    this.previous = previous;
+  }
+
+  static getDomain(context: TrackerContext<any>): ReactiveDomain {
+    // A copy of a context has no domain, and reads as undefined.
+    return (#domain in context ? context.#domain : undefined) as ReactiveDomain;
+  }
+}
 
 /**
  * Returns the domain behind a tracker context, for helpers that need more than
@@ -1225,23 +1331,7 @@ const CONTEXT_DOMAIN = Symbol('atemno.domain');
  * @internal
  */
 export function getContextDomain(context: TrackerContext<any>): ReactiveDomain {
-  return (context as unknown as Record<symbol, ReactiveDomain>)[CONTEXT_DOMAIN];
-}
-
-function createTrackerContext<T>(
-  parent: TrackerContextInternal,
-  previous: Ref<T> | undefined,
-): TrackerContext<T> {
-  const context: TrackerContext<T> = {
-    get: parent.get.bind(parent),
-    peek: parent.peek.bind(parent),
-    set: parent.set.bind(parent),
-    reset: parent.reset.bind(parent),
-    onCleanup: parent.onCleanup.bind(parent),
-    previous,
-  };
-  Object.defineProperty(context, CONTEXT_DOMAIN, { value: parent.domain });
-  return context;
+  return TrackerContextImpl.getDomain(context);
 }
 
 function updateTrackerContext<T>(
@@ -1253,7 +1343,7 @@ function updateTrackerContext<T>(
     node.context.destroy();
   }
   node.context = new TrackerContextInternal(domain, node);
-  return createTrackerContext(node.context, previous);
+  return new TrackerContextImpl(node.context, previous);
 }
 
 function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
@@ -1294,11 +1384,10 @@ function updateComputed<T>(
   domain: ReactiveDomain,
   node: ComputedNode<T>,
 ): void {
-  // Set aside the old dependencies and start collecting a fresh set. They are
-  // only released after the recomputation, so dependencies that get tracked
-  // again are never torn down in between.
-  const previous = node.tracker.trackables;
-  node.tracker.trackables = undefined;
+  // Start a new run of the tracker. Old dependencies are only released after
+  // the recomputation, so dependencies that get tracked again are never torn
+  // down in between.
+  startTrackerRun(node.tracker);
 
   // Mark this node clean
   node.tracker.state = State.Clean;
@@ -1349,7 +1438,7 @@ function updateComputed<T>(
     writeComputedSuccess(domain, node, result.value as T);
   }
 
-  releaseUnusedTrackables(domain, node.tracker, previous);
+  releaseUnusedTrackables(domain, node.tracker);
 }
 
 function updateObserver<T>(
@@ -1360,7 +1449,7 @@ function updateObserver<T>(
   let value: T;
   node.tracker.running = true;
   try {
-    value = domain.get(node.source);
+    value = readNode(domain, node.target!);
   } catch (error) {
     // A pending resource is not an error. The observer runs once it settles.
     if (!(error instanceof ResourceNotReadyError)) {
@@ -1384,8 +1473,13 @@ function updateObserver<T>(
 
 function isTrackerDirty(domain: ReactiveDomain, node: Tracker): boolean {
   // Check if one of the trackables are dirty
-  if (node.trackables && node.trackables.size) {
-    for (const trackable of [...node.trackables]) {
+  const trackables = node.trackables;
+  if (trackables && node.order) {
+    for (const trackable of node.order) {
+      // Revalidating a dependency can release others, which are skipped.
+      if (!trackables.has(trackable)) {
+        continue;
+      }
       if (trackable.parent.type === NodeType.Computed) {
         revalidateComputed(domain, trackable.parent);
       }
